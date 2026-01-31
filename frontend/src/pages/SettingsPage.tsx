@@ -31,7 +31,7 @@ interface FitbitStatus {
 
 export default function SettingsPage() {
   const { user } = useAuthStore()
-  const { goal, updateGoal } = useSleepStore()
+  const { updateGoal } = useSleepStore()
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [fitbitStatus, setFitbitStatus] = useState<FitbitStatus | null>(null)

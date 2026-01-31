@@ -28,7 +28,7 @@ interface SleepFormData {
 export default function SleepLogPage() {
   const { records, fetchRecords, createRecord, deleteRecord, isLoading } = useSleepStore()
   const [showForm, setShowForm] = useState(false)
-  const [selectedRecord, setSelectedRecord] = useState<SleepRecord | null>(null)
+  const [_selectedRecord, setSelectedRecord] = useState<SleepRecord | null>(null)
   
   const { register, handleSubmit, reset, watch, setValue, formState: { errors } } = useForm<SleepFormData>({
     defaultValues: {
