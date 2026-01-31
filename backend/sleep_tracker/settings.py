@@ -73,11 +73,11 @@ WSGI_APPLICATION = 'sleep_tracker.wsgi.application'
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.postgresql',
-        'NAME': os.environ.get('DB_NAME', 'sleep_tracker'),
-        'USER': os.environ.get('DB_USER', 'postgres'),
+        'NAME': os.environ.get('DB_NAME', ''),
+        'USER': os.environ.get('DB_USER', ''),
         'PASSWORD': os.environ.get('DB_PASSWORD', ''),
-        'HOST': os.environ.get('DB_HOST', 'localhost'),
-        'PORT': os.environ.get('DB_PORT', '5432'),
+        'HOST': os.environ.get('DB_HOST', ''),
+        'PORT': os.environ.get('DB_PORT', ''),
     }
 }
 
@@ -132,8 +132,8 @@ FIREBASE_CONFIG = {
 }
 
 # Fitbit API settings
-FITBIT_CLIENT_ID = os.environ.get('FITBIT_CLIENT_ID', '23TRGM')
-FITBIT_CLIENT_SECRET = os.environ.get('FITBIT_CLIENT_SECRET', 'b63c250df3e7c6b02c9c5f3ab5730856')
+FITBIT_CLIENT_ID = os.environ.get('FITBIT_CLIENT_ID', '')
+FITBIT_CLIENT_SECRET = os.environ.get('FITBIT_CLIENT_SECRET', '')
 FITBIT_REDIRECT_URI = os.environ.get('FITBIT_REDIRECT_URI', 'http://localhost:3000/fitbit/callback')
 
 # OpenAI settings for AI insights
