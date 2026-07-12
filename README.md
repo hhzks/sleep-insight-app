@@ -1,57 +1,79 @@
 # Sleep Tracker - Full Stack Web Application
 
-A comprehensive sleep tracking application with AI-powered insights, Fitbit integration, and Firebase authentication.
+A sleep tracking application with AI-powered insights, Fitbit integration, and Firebase authentication.
+
+![Dashboard](docs/screenshots/dashboard.png)
 
 ## Features
 
 - **User Authentication**: Secure login with Firebase (Email/Password + Google Sign-in)
 - **Manual Sleep Logging**: Log your sleep with quality ratings and notes
-- **Fitbit Integration**: Automatically sync sleep data from your Fitbit device
-- **AI-Powered Insights**: Get personalized sleep analysis and recommendations
-- **Interactive Dashboard**: Visualize your sleep patterns with charts
-- **Sleep Goals**: Set and track your sleep targets
+- **Fitbit Integration**: Connect via OAuth and sync sleep data from your Fitbit device, with sync history logs
+- **AI-Powered Insights**: Personalized sleep analysis and recommendations via OpenAI or Google Gemini (falls back to rule-based analysis when no API key is configured)
+- **Interactive Dashboard**: Visualize sleep patterns, statistics, and trends with charts
+- **Sleep Goals**: Set sleep targets and track progress against them
+
+## Screenshots
+
+| Trends | AI Insights |
+|---|---|
+| ![Trends](docs/screenshots/trends.png) | ![AI Insights](docs/screenshots/insights.png) |
+
+| Sleep Log | Login |
+|---|---|
+| ![Sleep Log](docs/screenshots/sleep-log.png) | ![Login](docs/screenshots/login.png) |
 
 ## Tech Stack
 
 ### Backend
-- **Django 4.2**: Python web framework
-- **Django REST Framework**: RESTful API
-- **Firebase Admin SDK**: Server-side authentication
-- **OpenAI GPT-4**: AI-powered insights
-- **SQLite/PostgreSQL**: Database
+- **Django 4.2** with **Django REST Framework**: RESTful API
+- **Firebase Admin SDK**: Server-side token verification (custom DRF authentication class)
+- **OpenAI (gpt-4o)** or **Google Gemini (gemini-1.5-flash)**: AI insights, selectable via `AI_PROVIDER`
+- **SQLite** (local default) / **PostgreSQL** (via `DATABASE_URL` or `DB_*` vars)
+- **WhiteNoise + Gunicorn**: Static files and production serving
 
 ### Frontend
-- **React 18**: UI library
-- **TypeScript**: Type-safe JavaScript
-- **Vite**: Build tool
-- **Tailwind CSS**: Styling
-- **Chart.js**: Data visualization
-- **Zustand**: State management
-- **React Router**: Navigation
+- **React 18** + **TypeScript** with **Vite** (dev server on port 3000, proxies `/api` to the backend)
+- **Tailwind CSS**, **Headless UI**, **Heroicons**: Styling and UI components
+- **Chart.js** (react-chartjs-2): Data visualization
+- **Zustand**: State management (auth + sleep stores)
+- **React Router**: Navigation with protected routes
+- **Axios**, **React Hook Form**, **react-hot-toast**, **date-fns**
 
 ## Project Structure
 
 ```
-sleep/
+sleepinsight/
 ├── backend/                  # Django backend
-│   ├── sleep_tracker/        # Main project settings
-│   ├── users/                # User authentication & profiles
+│   ├── sleep_tracker/        # Project settings & root URLconf
+│   ├── users/                # Custom user model, Firebase auth, profiles
 │   ├── sleep/                # Sleep records & goals
-│   ├── fitbit_integration/   # Fitbit OAuth & sync
-│   ├── ai_insights/          # AI-powered analysis
+│   ├── fitbit_integration/   # Fitbit OAuth, sync & sync logs
+│   ├── ai_insights/          # AI-powered analysis (OpenAI/Gemini)
+│   ├── build.sh              # Render build script
+│   ├── Procfile              # Gunicorn start command
 │   └── requirements.txt
 │
 ├── frontend/                 # React frontend
 │   ├── src/
-│   │   ├── components/       # Reusable components
-│   │   ├── pages/            # Page components
-│   │   ├── services/         # API & Firebase services
-│   │   ├── stores/           # Zustand state stores
-│   │   └── config.ts         # Configuration
+│   │   ├── components/       # Layout, ProtectedRoute, charts
+│   │   ├── pages/            # Dashboard, SleepLog, Trends, Insights,
+│   │   │                     # Settings, Login, Register, FitbitCallback
+│   │   ├── services/         # API client (axios) & Firebase
+│   │   ├── stores/           # Zustand stores (auth, sleep)
+│   │   └── config.ts         # Firebase & API configuration
+│   ├── vercel.json           # Vercel deployment config
 │   └── package.json
 │
+├── render.yaml               # Render blueprint (API + PostgreSQL)
 └── README.md
 ```
+
+## How It Works
+
+Authentication is fully delegated to Firebase: the React app signs the user in with the Firebase Web SDK and attaches the resulting ID token to every API request. On the backend, a custom DRF authentication class verifies the token with the Firebase Admin SDK and automatically provisions a local Django user on first sight — there is no separate registration endpoint or session/JWT handling to configure.
+
+Sleep data comes from two sources that share the same models: manual entries created in the UI, and records imported through the Fitbit OAuth integration. The insights module summarizes recent records (duration, efficiency, sleep stages, consistency, sleep debt) and sends that summary to the configured AI provider; without an API key it degrades to built-in rule-based analysis, so the feature works out of the box.
 
 ## Getting Started
 
@@ -59,27 +81,34 @@ sleep/
 
 - Python 3.10+
 - Node.js 18+
-- Firebase project
-- Fitbit Developer account (optional)
-- OpenAI API key (optional, for AI insights)
+- Firebase project (required — handles all authentication)
+- Fitbit Developer account (optional — only for device sync)
+- OpenAI or Google Gemini API key (optional — AI insights fall back to rule-based analysis)
 
-### 1. Firebase Setup
+### 1. Clone the Repository
+
+```bash
+git clone https://github.com/hhzks/sleep-insight-app.git
+cd sleep-insight-app
+```
+
+### 2. Firebase Setup
 
 1. Create a new project at [Firebase Console](https://console.firebase.google.com)
 2. Enable Authentication with Email/Password and Google providers
 3. Generate a new service account key:
    - Go to Project Settings > Service Accounts
    - Click "Generate new private key"
-   - Save the JSON file securely
+   - Save the JSON file securely (you'll copy values from it into `.env`)
 
-### 2. Fitbit Setup (Optional)
+### 3. Fitbit Setup (Optional)
 
 1. Register an app at [Fitbit Developer](https://dev.fitbit.com/apps)
 2. Set OAuth 2.0 Application Type to "Personal"
 3. Set Callback URL to `http://localhost:3000/fitbit/callback`
 4. Note your Client ID and Client Secret
 
-### 3. Backend Setup
+### 4. Backend Setup
 
 ```bash
 # Navigate to backend directory
@@ -111,7 +140,7 @@ python manage.py createsuperuser
 python manage.py runserver
 ```
 
-### 4. Frontend Setup
+### 5. Frontend Setup
 
 ```bash
 # Navigate to frontend directory
@@ -128,7 +157,7 @@ cp .env.example .env.local
 npm run dev
 ```
 
-### 5. Access the Application
+### 6. Access the Application
 
 - Frontend: http://localhost:3000
 - Backend API: http://localhost:8000/api
@@ -138,33 +167,49 @@ npm run dev
 
 ### Backend Environment Variables
 
+See `backend/.env.example` for the full template.
+
 | Variable | Description |
 |----------|-------------|
 | `DJANGO_SECRET_KEY` | Django secret key |
-| `DEBUG` | Enable debug mode |
+| `DEBUG` | Enable debug mode (defaults to `True` locally) |
+| `ALLOWED_HOSTS` | Comma-separated allowed hosts |
+| `CORS_ALLOWED_ORIGINS` | Comma-separated allowed frontend origins |
+| `DATABASE_URL` | Full database URL (takes priority; used on Render) |
+| `DB_NAME`, `DB_USER`, `DB_PASSWORD`, `DB_HOST`, `DB_PORT` | PostgreSQL settings (used if `DATABASE_URL` is unset; falls back to SQLite) |
 | `FIREBASE_PROJECT_ID` | Firebase project ID |
 | `FIREBASE_PRIVATE_KEY` | Firebase service account private key |
 | `FIREBASE_CLIENT_EMAIL` | Firebase service account email |
 | `FITBIT_CLIENT_ID` | Fitbit OAuth client ID |
 | `FITBIT_CLIENT_SECRET` | Fitbit OAuth client secret |
-| `OPENAI_API_KEY` | OpenAI API key for AI insights |
+| `FITBIT_REDIRECT_URI` | Fitbit OAuth callback URL (defaults to `http://localhost:3000/fitbit/callback`) |
+| `AI_PROVIDER` | `openai` (default) or `gemini` |
+| `OPENAI_API_KEY` | OpenAI API key (used when `AI_PROVIDER=openai`) |
+| `GEMINI_API_KEY` | Google Gemini API key (used when `AI_PROVIDER=gemini`) |
 
 ### Frontend Environment Variables
+
+See `frontend/.env.example` for the full template.
 
 | Variable | Description |
 |----------|-------------|
 | `VITE_FIREBASE_API_KEY` | Firebase Web API key |
 | `VITE_FIREBASE_AUTH_DOMAIN` | Firebase auth domain |
 | `VITE_FIREBASE_PROJECT_ID` | Firebase project ID |
-| `VITE_API_BASE_URL` | Backend API URL |
+| `VITE_FIREBASE_STORAGE_BUCKET` | Firebase storage bucket |
+| `VITE_FIREBASE_MESSAGING_SENDER_ID` | Firebase messaging sender ID |
+| `VITE_FIREBASE_APP_ID` | Firebase app ID |
+| `VITE_API_BASE_URL` | Backend API URL (defaults to `http://localhost:8000/api`) |
 
 ## API Endpoints
 
 ### Authentication
-All endpoints require Firebase ID token in Authorization header:
+All endpoints require a Firebase ID token in the Authorization header:
 ```
 Authorization: Bearer <firebase-id-token>
 ```
+
+List endpoints are paginated (20 per page).
 
 ### Users
 - `GET /api/users/me/` - Get current user profile
@@ -192,26 +237,23 @@ Authorization: Bearer <firebase-id-token>
 - `GET /api/fitbit/status/` - Get connection status
 - `DELETE /api/fitbit/status/` - Disconnect Fitbit
 - `POST /api/fitbit/sync/` - Sync sleep data
+- `GET /api/fitbit/sync-logs/` - Get sync history
 
 ### AI Insights
 - `POST /api/insights/generate/` - Generate AI insights
 - `GET /api/insights/list/` - List saved insights
 - `GET /api/insights/{id}/` - Get insight details
 - `GET /api/insights/tips/` - Get sleep tips
+- `GET /api/insights/tips/{category}/` - Get tips by category
 - `GET /api/insights/quick/` - Get quick summary
 
 ## Development
 
-### Running Tests
+### Linting
 
 ```bash
-# Backend tests
-cd backend
-python manage.py test
-
-# Frontend tests
 cd frontend
-npm test
+npm run lint
 ```
 
 ### Database Migrations
@@ -224,14 +266,21 @@ python manage.py migrate
 
 ## Deployment
 
-### Backend (Example with Gunicorn)
+The repository ships with configuration for Render (backend + database) and Vercel (frontend).
 
-```bash
-pip install gunicorn
-gunicorn sleep_tracker.wsgi:application --bind 0.0.0.0:8000
-```
+### Backend — Render
 
-### Frontend (Build for Production)
+`render.yaml` defines a blueprint with:
+- A **web service** (`sleep-tracker-api`) that runs `backend/build.sh` (installs dependencies, collects static files, runs migrations) and serves with Gunicorn
+- A free **PostgreSQL database** wired in via `DATABASE_URL`
+
+Create a Blueprint on [Render](https://render.com) pointed at this repository, then fill in the environment variables marked `sync: false` (Firebase, Fitbit, CORS origins, AI keys) in the dashboard.
+
+### Frontend — Vercel
+
+`frontend/vercel.json` configures the Vite build with SPA rewrites. Import the repository into [Vercel](https://vercel.com) with `frontend` as the root directory and set the `VITE_*` environment variables (point `VITE_API_BASE_URL` at your deployed backend, e.g. `https://<your-service>.onrender.com/api`).
+
+Or build manually:
 
 ```bash
 cd frontend
