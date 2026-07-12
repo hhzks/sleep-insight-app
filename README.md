@@ -2,7 +2,7 @@
 
 A sleep tracking application with AI-powered insights, Fitbit integration, and Firebase authentication.
 
-![Dashboard](docs/screenshots/dashboard.png)
+![Dashboard](assets/screenshots/dashboard.png)
 
 ## Features
 
@@ -17,11 +17,11 @@ A sleep tracking application with AI-powered insights, Fitbit integration, and F
 
 | Trends | AI Insights |
 |---|---|
-| ![Trends](docs/screenshots/trends.png) | ![AI Insights](docs/screenshots/insights.png) |
+| ![Trends](assets/screenshots/trends.png) | ![AI Insights](assets/screenshots/insights.png) |
 
 | Sleep Log | Login |
 |---|---|
-| ![Sleep Log](docs/screenshots/sleep-log.png) | ![Login](docs/screenshots/login.png) |
+| ![Sleep Log](assets/screenshots/sleep-log.png) | ![Login](assets/screenshots/login.png) |
 
 ## Tech Stack
 
