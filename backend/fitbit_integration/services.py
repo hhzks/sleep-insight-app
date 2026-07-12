@@ -24,7 +24,6 @@ class FitbitService:
         self.client_id = settings.FITBIT_CLIENT_ID
         self.client_secret = settings.FITBIT_CLIENT_SECRET
         self.redirect_uri = settings.FITBIT_REDIRECT_URI
-        print(self.user, self.client_id, self.client_secret, self.redirect_uri)
     
     @staticmethod
     def generate_code_verifier():

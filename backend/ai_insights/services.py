@@ -5,7 +5,7 @@ Uses OpenAI or Google Gemini to generate personalized sleep insights.
 import json
 from datetime import datetime, timedelta
 from django.conf import settings
-from django.db.models import Avg, Sum, Min, Max
+from django.db.models import Avg, Count, Sum, Min, Max
 from django.utils import timezone
 
 from sleep.models import SleepRecord, SleepGoal
@@ -43,7 +43,7 @@ class AIInsightsService:
             avg_deep=Avg('deep_sleep_minutes'),
             avg_rem=Avg('rem_sleep_minutes'),
             avg_light=Avg('light_sleep_minutes'),
-            total_records=Sum('id'),
+            total_records=Count('id'),
         )
         
         # Calculate sleep consistency (std dev of sleep times)

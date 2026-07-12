@@ -164,20 +164,14 @@ class SleepGoalViewSet(viewsets.ModelViewSet):
         return SleepGoal.objects.filter(user=self.request.user)
     
     def create(self, request, *args, **kwargs):
-        """Create or update sleep goal."""
-        goal, created = SleepGoal.objects.get_or_create(
-            user=request.user,
-            defaults=request.data
-        )
-        
-        if not created:
-            serializer = self.get_serializer(goal, data=request.data, partial=True)
-            serializer.is_valid(raise_exception=True)
-            serializer.save()
-            return Response(serializer.data)
-        
-        serializer = self.get_serializer(goal)
-        return Response(serializer.data, status=status.HTTP_201_CREATED)
+        """Create or update the current user's sleep goal."""
+        goal = SleepGoal.objects.filter(user=request.user).first()
+        serializer = self.get_serializer(goal, data=request.data, partial=goal is not None)
+        serializer.is_valid(raise_exception=True)
+        serializer.save(user=request.user)
+
+        status_code = status.HTTP_200_OK if goal else status.HTTP_201_CREATED
+        return Response(serializer.data, status=status_code)
     
     @action(detail=False, methods=['get'])
     def progress(self, request):
