@@ -12,6 +12,7 @@ import {
   StarIcon,
 } from '@heroicons/react/24/outline'
 import { StarIcon as StarSolidIcon } from '@heroicons/react/24/solid'
+import StageBar from '../components/charts/StageBar'
 
 interface SleepFormData {
   date_of_sleep: string
@@ -347,20 +348,11 @@ export default function SleepLogPage() {
               {record.deep_sleep_minutes !== null && (
                 <div className="mt-4 pt-4 border-t border-slate-700">
                   <p className="text-sm text-slate-400 mb-2">Sleep Stages</p>
-                  <div className="flex space-x-4">
-                    <div className="flex items-center">
-                      <div className="w-3 h-3 rounded-full bg-sleep-deep mr-2" />
-                      <span className="text-sm text-white">Deep: {record.deep_sleep_minutes}m</span>
-                    </div>
-                    <div className="flex items-center">
-                      <div className="w-3 h-3 rounded-full bg-sleep-light mr-2" />
-                      <span className="text-sm text-white">Light: {record.light_sleep_minutes}m</span>
-                    </div>
-                    <div className="flex items-center">
-                      <div className="w-3 h-3 rounded-full bg-sleep-rem mr-2" />
-                      <span className="text-sm text-white">REM: {record.rem_sleep_minutes}m</span>
-                    </div>
-                  </div>
+                  <StageBar
+                    deep={record.deep_sleep_minutes || 0}
+                    light={record.light_sleep_minutes || 0}
+                    rem={record.rem_sleep_minutes || 0}
+                  />
                 </div>
               )}
             </div>

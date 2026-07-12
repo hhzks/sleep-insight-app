@@ -10,31 +10,9 @@ import {
   ArrowTrendingUpIcon,
   ArrowTrendingDownIcon,
 } from '@heroicons/react/24/outline'
-import {
-  Chart as ChartJS,
-  CategoryScale,
-  LinearScale,
-  BarElement,
-  LineElement,
-  PointElement,
-  Title,
-  Tooltip,
-  Legend,
-  ArcElement,
-} from 'chart.js'
-import { Bar, Doughnut } from 'react-chartjs-2'
-
-ChartJS.register(
-  CategoryScale,
-  LinearScale,
-  BarElement,
-  LineElement,
-  PointElement,
-  Title,
-  Tooltip,
-  Legend,
-  ArcElement
-)
+import { Doughnut } from 'react-chartjs-2'
+import DurationChart from '../components/charts/DurationChart'
+import { stageColors, chrome } from '../components/charts/chartTheme'
 
 interface QuickInsight {
   has_data: boolean
@@ -95,23 +73,6 @@ export default function DashboardPage() {
     )
   }
 
-  const sleepChartData = {
-    labels: recentSleep.map(d => {
-      const date = new Date(d.date)
-      return date.toLocaleDateString('en-US', { weekday: 'short' })
-    }),
-    datasets: [
-      {
-        label: 'Hours of Sleep',
-        data: recentSleep.map(d => d.sleep_hours),
-        backgroundColor: 'rgba(33, 150, 243, 0.8)',
-        borderColor: 'rgba(33, 150, 243, 1)',
-        borderWidth: 1,
-        borderRadius: 4,
-      },
-    ],
-  }
-
   const sleepStagesData = statistics && statistics.avg_deep_sleep_minutes ? {
     labels: ['Deep', 'Light', 'REM'],
     datasets: [
@@ -121,12 +82,9 @@ export default function DashboardPage() {
           statistics.avg_light_sleep_minutes || 0,
           statistics.avg_rem_sleep_minutes || 0,
         ],
-        backgroundColor: [
-          'rgba(26, 35, 126, 0.8)',
-          'rgba(100, 181, 246, 0.8)',
-          'rgba(123, 31, 162, 0.8)',
-        ],
-        borderWidth: 0,
+        backgroundColor: [stageColors.deep, stageColors.light, stageColors.rem],
+        borderColor: chrome.surface,
+        borderWidth: 2,
       },
     ],
   } : null
@@ -233,32 +191,20 @@ export default function DashboardPage() {
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Sleep Duration Chart */}
         <div className="card">
-          <h3 className="text-lg font-semibold text-white mb-4">Last 7 Days</h3>
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-lg font-semibold text-white">Last 7 Days</h3>
+            <Link to="/trends" className="text-blue-500 hover:text-blue-400 text-sm">
+              View Trends →
+            </Link>
+          </div>
           {recentSleep.length > 0 ? (
-            <div className="h-64">
-              <Bar
-                data={sleepChartData}
-                options={{
-                  responsive: true,
-                  maintainAspectRatio: false,
-                  plugins: {
-                    legend: { display: false },
-                  },
-                  scales: {
-                    y: {
-                      beginAtZero: true,
-                      max: 12,
-                      grid: { color: 'rgba(255,255,255,0.1)' },
-                      ticks: { color: 'rgba(255,255,255,0.7)' },
-                    },
-                    x: {
-                      grid: { display: false },
-                      ticks: { color: 'rgba(255,255,255,0.7)' },
-                    },
-                  },
-                }}
-              />
-            </div>
+            <DurationChart
+              labels={recentSleep.map(d =>
+                new Date(d.date + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'short' })
+              )}
+              hours={recentSleep.map(d => d.sleep_hours)}
+              goalHours={goal ? Number(goal.target_hours) : undefined}
+            />
           ) : (
             <div className="h-64 flex items-center justify-center text-slate-400">
               <p>No sleep data yet. Start logging your sleep!</p>

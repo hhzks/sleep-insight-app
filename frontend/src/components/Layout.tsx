@@ -9,11 +9,13 @@ import {
   Bars3Icon,
   XMarkIcon,
   ArrowRightOnRectangleIcon,
+  PresentationChartLineIcon,
 } from '@heroicons/react/24/outline'
 
 const navigation = [
   { name: 'Dashboard', href: '/dashboard', icon: HomeIcon },
   { name: 'Sleep Log', href: '/sleep-log', icon: MoonIcon },
+  { name: 'Trends', href: '/trends', icon: PresentationChartLineIcon },
   { name: 'Insights', href: '/insights', icon: LightBulbIcon },
   { name: 'Settings', href: '/settings', icon: Cog6ToothIcon },
 ]

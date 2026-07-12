@@ -6,6 +6,7 @@ import LoginPage from './pages/LoginPage'
 import RegisterPage from './pages/RegisterPage'
 import DashboardPage from './pages/DashboardPage'
 import SleepLogPage from './pages/SleepLogPage'
+import TrendsPage from './pages/TrendsPage'
 import InsightsPage from './pages/InsightsPage'
 import SettingsPage from './pages/SettingsPage'
 import FitbitCallbackPage from './pages/FitbitCallbackPage'
@@ -45,6 +46,7 @@ function App() {
         <Route index element={<Navigate to="/dashboard" />} />
         <Route path="dashboard" element={<DashboardPage />} />
         <Route path="sleep-log" element={<SleepLogPage />} />
+        <Route path="trends" element={<TrendsPage />} />
         <Route path="insights" element={<InsightsPage />} />
         <Route path="settings" element={<SettingsPage />} />
         <Route path="fitbit/callback" element={<FitbitCallbackPage />} />

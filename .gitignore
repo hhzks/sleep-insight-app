@@ -33,6 +33,7 @@ yarn-error.log*
 
 # Build outputs
 frontend/dist/
+*.tsbuildinfo
 *.local
 
 # IDE
