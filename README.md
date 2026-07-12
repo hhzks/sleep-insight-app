@@ -1,4 +1,4 @@
-# Sleep Tracker - Full Stack Web Application
+# Sleep Tracker
 
 A sleep tracking application with AI-powered insights, Fitbit integration, and Firebase authentication.
 
