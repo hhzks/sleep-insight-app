@@ -40,11 +40,13 @@ def build_insights_prompt(sleep_summary):
     return f"""As a sleep health expert, analyze this user's sleep data and provide personalized insights and recommendations.
 
 Sleep Data Summary (last {sleep_summary['period_days']} days):
+- Nights recorded: {sleep_summary['total_records']}
 - Average sleep duration: {sleep_summary['avg_sleep_hours']} hours
 - Average time in bed: {sleep_summary['avg_time_in_bed_hours']} hours
 - Sleep efficiency: {sleep_summary['avg_efficiency']}%
 - Deep sleep average: {sleep_summary['avg_deep_sleep_minutes']} minutes
 - REM sleep average: {sleep_summary['avg_rem_sleep_minutes']} minutes
+- Light sleep average: {sleep_summary['avg_light_sleep_minutes']} minutes
 - Sleep consistency score: {sleep_summary['consistency_score']}/100
 - Target sleep hours: {sleep_summary['target_hours']} hours
 - Accumulated sleep debt: {sleep_summary['sleep_debt_hours']} hours
@@ -57,5 +59,5 @@ Provide 3-5 insights focused on:
 4. Consistency and schedule
 5. Actionable improvements
 
-The "score" is an overall sleep health score from 1 to 100.
+The "score" is an overall sleep health score from 0 to 100.
 Be encouraging but honest. Focus on specific, actionable advice."""

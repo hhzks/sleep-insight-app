@@ -36,6 +36,8 @@ class BuildInsightsPromptTests(SimpleTestCase):
         self.assertIn('72.0', prompt)
         self.assertIn('declining', prompt)
         self.assertIn('30 days', prompt)
+        self.assertIn('28', prompt)
+        self.assertIn('250', prompt)
 
     def test_system_prompt_demands_json(self):
         self.assertIn('JSON', SYSTEM_PROMPT)
