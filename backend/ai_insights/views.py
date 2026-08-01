@@ -7,7 +7,8 @@ from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 
 from .models import SleepInsight, SleepTip
-from .services import AIInsightsService
+from .services import generate_insights, get_relevant_tips
+from .summary import build_sleep_summary
 from .serializers import (
     SleepInsightSerializer,
     SleepTipSerializer,
@@ -31,9 +32,8 @@ class GenerateInsightsView(APIView):
         except (ValueError, TypeError):
             days = 30
         
-        service = AIInsightsService(request.user)
-        insights = service.generate_and_save_insights(days)
-        
+        insights = generate_insights(request.user, days).payload
+
         serializer = AIInsightsResponseSerializer(insights)
         return Response(serializer.data)
 
@@ -122,9 +122,8 @@ class TipsListView(APIView):
             limit = 5
         
         # Get personalized tips
-        service = AIInsightsService(request.user)
-        tips = service.get_relevant_tips(limit)
-        
+        tips = get_relevant_tips(request.user, limit)
+
         serializer = SleepTipSerializer(tips, many=True)
         return Response(serializer.data)
 
@@ -148,11 +147,9 @@ class QuickInsightsView(APIView):
     
     def get(self, request):
         """Get quick sleep summary and insights."""
-        service = AIInsightsService(request.user)
-        
         # Get sleep summary
-        summary = service.get_sleep_data_summary(7)
-        
+        summary = build_sleep_summary(request.user, 7)
+
         if not summary:
             return Response({
                 'has_data': False,
