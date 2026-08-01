@@ -71,7 +71,7 @@ sleepinsight/
 
 ## How It Works
 
-Authentication is fully delegated to Firebase: the React app signs the user in with the Firebase Web SDK and attaches the resulting ID token to every API request. On the backend, a custom DRF authentication class verifies the token with the Firebase Admin SDK and automatically provisions a local Django user on first sight — there is no separate registration endpoint or session/JWT handling to configure.
+Authentication is fully delegated to Firebase: the React app signs the user in with the Firebase Web SDK and attaches the resulting ID token to every API request. On the backend, a custom DRF authentication class verifies the token with the Firebase Admin SDK and automatically provisions a local Django user on first sight; there is no separate registration endpoint or session/JWT handling to configure.
 
 Sleep data comes from two sources that share the same models: manual entries created in the UI, and records imported through the Fitbit OAuth integration. The insights module summarizes recent records (duration, efficiency, sleep stages, consistency, sleep debt) and sends that summary to a self-hosted Ollama server. Because CPU inference takes minutes, generation runs in a background thread and the UI polls for the result; if the model is unreachable, slow, or returns malformed output, the app falls back to built-in rule-based analysis and tells the user it did so.
 
@@ -82,8 +82,8 @@ Sleep data comes from two sources that share the same models: manual entries cre
 - Python 3.10+
 - Node.js 18+
 - Firebase project (required — handles all authentication)
-- Fitbit Developer account (optional — only for device sync)
-- Self-hosted Ollama server (optional — AI insights fall back to rule-based analysis if unavailable)
+- Fitbit Developer account (optional, only for device sync)
+- Self-hosted Ollama server (optional, AI insights fall back to rule-based analysis if unavailable)
 
 ### Setting Up the Inference Server
 
@@ -98,7 +98,7 @@ Oracle Cloud Ampere A1 instance (ARM64, CPU-only), but any Linux box works.
    ```
 
    On 4 A1 cores expect 1.5–3 minutes per generation. Use `qwen2.5:3b-instruct`
-   if that is too slow — it is a config change (`OLLAMA_MODEL`), not a code change.
+   if that is too slow then use a smaller model by changing `OLLAMA_MODEL` in the config.
 
 2. **Keep the model resident** so the first request of the day is not 30 seconds
    slower. Add to `/etc/systemd/system/ollama.service.d/override.conf`:
@@ -113,8 +113,7 @@ Oracle Cloud Ampere A1 instance (ARM64, CPU-only), but any Linux box works.
    **Leave Ollama bound to `127.0.0.1`.** It has no authentication of its own;
    Caddy is what stands between it and the internet.
 
-3. **Point a DNS name at the instance**
-   Caddy needs a resolvable hostname to obtain a Let's Encrypt certificate.
+3. **Point a DNS name at the instance** since Caddy needs a resolvable hostname to obtain a Let's Encrypt certificate.
 
 4. **Install Caddy** and use this `Caddyfile`, which rejects anything without
    the right bearer token:
@@ -129,9 +128,8 @@ Oracle Cloud Ampere A1 instance (ARM64, CPU-only), but any Linux box works.
 
    Put `OLLAMA_TOKEN` in Caddy's systemd environment, not in the Caddyfile.
 
-5. **Open port 443 — and only 443.** On OCI this takes two steps, and skipping
-   the second is the most common reason a correctly configured server appears
-   dead:
+5. **Open port 443 (and only 443!!).** On OCI this takes two steps, and skipping
+   the second is will probably make the server appear dead:
 
    ```bash
    # 1. Add an ingress rule for TCP 443 in the VCN security list (OCI console)
@@ -257,7 +255,7 @@ See `backend/.env.example` for the full template.
 | `OLLAMA_INVALID_RETRIES` | Retries after malformed model output before falling back to rules (defaults to 1) |
 | `INSIGHT_JOB_STALE_MINUTES` | Max job age before reaper kills it (defaults to 15) |
 
-`INSIGHT_JOB_STALE_MINUTES * 60` must exceed `OLLAMA_TIMEOUT_SECONDS * (1 + OLLAMA_INVALID_RETRIES)`, or the reaper can kill jobs that are still legitimately generating — so raising the timeout or the retry count requires raising the stale window too.
+`INSIGHT_JOB_STALE_MINUTES * 60` must exceed `OLLAMA_TIMEOUT_SECONDS * (1 + OLLAMA_INVALID_RETRIES)`, or the reaper can kill jobs that are still generating.
 
 ### Frontend Environment Variables
 
