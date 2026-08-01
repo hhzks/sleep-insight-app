@@ -6,36 +6,70 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 
-from .models import SleepInsight, SleepTip
-from .services import generate_insights, get_relevant_tips
+from .jobs import reap_stale_jobs, start_insight_job
+from .models import InsightJob, SleepInsight, SleepTip
+from .services import get_relevant_tips
 from .summary import build_sleep_summary
 from .serializers import (
     SleepInsightSerializer,
     SleepTipSerializer,
-    AIInsightsResponseSerializer,
-    InsightFeedbackSerializer
 )
 
 
 class GenerateInsightsView(APIView):
-    """Generate AI-powered sleep insights."""
-    
+    """Queue background generation of AI-powered sleep insights."""
+
     permission_classes = [IsAuthenticated]
-    
+
     def post(self, request):
-        """Generate new insights based on sleep data."""
+        """Start a job and return immediately; the client polls for the result."""
         days = request.data.get('days', 30)
-        
+
         try:
             days = int(days)
             days = max(7, min(365, days))
         except (ValueError, TypeError):
             days = 30
-        
-        insights = generate_insights(request.user, days).payload
 
-        serializer = AIInsightsResponseSerializer(insights)
-        return Response(serializer.data)
+        job, already_running = start_insight_job(request.user, days)
+
+        response = job.to_response()
+        response['already_running'] = already_running
+        return Response(response, status=status.HTTP_202_ACCEPTED)
+
+
+class InsightJobDetailView(APIView):
+    """Poll a single generation job."""
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, job_id):
+        """Return the job's current status and, once finished, its result."""
+        reap_stale_jobs()
+
+        job = InsightJob.objects.filter(id=job_id, user=request.user).first()
+        if job is None:
+            return Response({'error': 'Job not found'}, status=status.HTTP_404_NOT_FOUND)
+
+        return Response(job.to_response())
+
+
+class ActiveInsightJobView(APIView):
+    """Find the user's in-flight job so the UI can resume polling."""
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        """Return the active job, or 204 when nothing is running."""
+        reap_stale_jobs()
+
+        job = InsightJob.objects.filter(
+            user=request.user, status__in=InsightJob.ACTIVE_STATUSES
+        ).first()
+        if job is None:
+            return Response(status=status.HTTP_204_NO_CONTENT)
+
+        return Response(job.to_response())
 
 
 class InsightsListView(APIView):
