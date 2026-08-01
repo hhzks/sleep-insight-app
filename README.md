@@ -9,7 +9,7 @@ A sleep tracking application with AI-powered insights, Fitbit integration, and F
 - **User Authentication**: Secure login with Firebase (Email/Password + Google Sign-in)
 - **Manual Sleep Logging**: Log your sleep with quality ratings and notes
 - **Fitbit Integration**: Connect via OAuth and sync sleep data from your Fitbit device, with sync history logs
-- **AI-Powered Insights**: Personalized sleep analysis and recommendations via OpenAI or Google Gemini (falls back to rule-based analysis when no API key is configured)
+- **AI-Powered Insights**: Personalized sleep analysis from a self-hosted Ollama model, generated in the background and polled by the UI (falls back to rule-based analysis when the model is unreachable)
 - **Interactive Dashboard**: Visualize sleep patterns, statistics, and trends with charts
 - **Sleep Goals**: Set sleep targets and track progress against them
 
@@ -28,7 +28,7 @@ A sleep tracking application with AI-powered insights, Fitbit integration, and F
 ### Backend
 - **Django 4.2** with **Django REST Framework**: RESTful API
 - **Firebase Admin SDK**: Server-side token verification (custom DRF authentication class)
-- **OpenAI (gpt-4o)** or **Google Gemini (gemini-1.5-flash)**: AI insights, selectable via `AI_PROVIDER`
+- **Self-hosted Ollama (`qwen2.5:7b-instruct`)**: AI insights generated on your own inference server (falls back to rule-based analysis when the server is unreachable)
 - **SQLite** (local default) / **PostgreSQL** (via `DATABASE_URL` or `DB_*` vars)
 - **WhiteNoise + Gunicorn**: Static files and production serving
 
@@ -49,7 +49,7 @@ sleepinsight/
 │   ├── users/                # Custom user model, Firebase auth, profiles
 │   ├── sleep/                # Sleep records & goals
 │   ├── fitbit_integration/   # Fitbit OAuth, sync & sync logs
-│   ├── ai_insights/          # AI-powered analysis (OpenAI/Gemini)
+│   ├── ai_insights/          # AI-powered analysis (self-hosted Ollama)
 │   ├── build.sh              # Render build script
 │   ├── Procfile              # Gunicorn start command
 │   └── requirements.txt
@@ -73,7 +73,7 @@ sleepinsight/
 
 Authentication is fully delegated to Firebase: the React app signs the user in with the Firebase Web SDK and attaches the resulting ID token to every API request. On the backend, a custom DRF authentication class verifies the token with the Firebase Admin SDK and automatically provisions a local Django user on first sight — there is no separate registration endpoint or session/JWT handling to configure.
 
-Sleep data comes from two sources that share the same models: manual entries created in the UI, and records imported through the Fitbit OAuth integration. The insights module summarizes recent records (duration, efficiency, sleep stages, consistency, sleep debt) and sends that summary to the configured AI provider; without an API key it degrades to built-in rule-based analysis, so the feature works out of the box.
+Sleep data comes from two sources that share the same models: manual entries created in the UI, and records imported through the Fitbit OAuth integration. The insights module summarizes recent records (duration, efficiency, sleep stages, consistency, sleep debt) and sends that summary to a self-hosted Ollama server. Because CPU inference takes minutes, generation runs in a background thread and the UI polls for the result; if the model is unreachable, slow, or returns malformed output, the app falls back to built-in rule-based analysis and tells the user it did so.
 
 ## Getting Started
 
@@ -83,7 +83,7 @@ Sleep data comes from two sources that share the same models: manual entries cre
 - Node.js 18+
 - Firebase project (required — handles all authentication)
 - Fitbit Developer account (optional — only for device sync)
-- OpenAI or Google Gemini API key (optional — AI insights fall back to rule-based analysis)
+- Self-hosted Ollama server (optional — AI insights fall back to rule-based analysis if unavailable)
 
 ### 1. Clone the Repository
 
@@ -183,9 +183,11 @@ See `backend/.env.example` for the full template.
 | `FITBIT_CLIENT_ID` | Fitbit OAuth client ID |
 | `FITBIT_CLIENT_SECRET` | Fitbit OAuth client secret |
 | `FITBIT_REDIRECT_URI` | Fitbit OAuth callback URL (defaults to `http://localhost:3000/fitbit/callback`) |
-| `AI_PROVIDER` | `openai` (default) or `gemini` |
-| `OPENAI_API_KEY` | OpenAI API key (used when `AI_PROVIDER=openai`) |
-| `GEMINI_API_KEY` | Google Gemini API key (used when `AI_PROVIDER=gemini`) |
+| `OLLAMA_BASE_URL` | Ollama server URL (defaults to `http://localhost:11434`) |
+| `OLLAMA_API_KEY` | Ollama bearer token (blank locally; set for production proxies) |
+| `OLLAMA_MODEL` | Model name (defaults to `qwen2.5:7b-instruct`) |
+| `OLLAMA_TIMEOUT_SECONDS` | Max generation time in seconds (defaults to 300) |
+| `INSIGHT_JOB_STALE_MINUTES` | Max job age before reaper kills it (defaults to 15) |
 
 ### Frontend Environment Variables
 
