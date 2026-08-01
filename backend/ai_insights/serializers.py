@@ -25,15 +25,6 @@ class SleepTipSerializer(serializers.ModelSerializer):
         fields = ['id', 'category', 'title', 'content', 'short_tip']
 
 
-class AIInsightsResponseSerializer(serializers.Serializer):
-    """Serializer for AI insights response."""
-    
-    overall_assessment = serializers.CharField()
-    score = serializers.IntegerField(allow_null=True)
-    insights = serializers.ListField(child=serializers.DictField())
-    tips = serializers.ListField(child=serializers.CharField())
-
-
 class InsightFeedbackSerializer(serializers.Serializer):
     """Serializer for insight feedback."""
     

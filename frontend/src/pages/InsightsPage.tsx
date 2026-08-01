@@ -1,5 +1,10 @@
 import { useEffect, useState } from 'react'
 import { insightsApi } from '../services/api'
+import {
+  InsightJobTimeoutError,
+  pollInsightJob,
+  type AIResponse,
+} from '../services/insightJobs'
 import toast from 'react-hot-toast'
 import {
   SparklesIcon,
@@ -19,18 +24,6 @@ interface Insight {
   created_at: string
 }
 
-interface AIResponse {
-  overall_assessment: string
-  score: number | null
-  insights: Array<{
-    type: string
-    priority: string
-    title: string
-    content: string
-  }>
-  tips: string[]
-}
-
 interface Tip {
   id: number
   category: string
@@ -46,10 +39,25 @@ export default function InsightsPage() {
   const [loading, setLoading] = useState(true)
   const [generating, setGenerating] = useState(false)
   const [selectedPeriod, setSelectedPeriod] = useState(30)
+  const [notice, setNotice] = useState<string | null>(null)
 
   useEffect(() => {
     loadData()
+    resumeActiveJob()
   }, [])
+
+  // A job started before a reload or a tab switch is still running server-side.
+  const resumeActiveJob = async () => {
+    try {
+      const response = await insightsApi.getActiveJob()
+      if (response.status === 204) return
+      setGenerating(true)
+      await watchJob(response.data.job_id)
+    } catch (error) {
+      console.error('Failed to resume active insight job:', error)
+      setGenerating(false)
+    }
+  }
 
   const loadData = async () => {
     setLoading(true)
@@ -69,16 +77,50 @@ export default function InsightsPage() {
 
   const generateInsights = async () => {
     setGenerating(true)
+    setNotice(null)
     try {
       const response = await insightsApi.generate(selectedPeriod)
-      setAiResponse(response.data)
-      toast.success('Insights generated!')
-      // Reload insights list
+      if (response.data.already_running) {
+        toast('Insight generation is already in progress')
+      }
+      await watchJob(response.data.job_id)
+    } catch (error) {
+      console.error('Failed to start insight generation:', error)
+      toast.error('Failed to generate insights')
+      setGenerating(false)
+    }
+  }
+
+  // Polls to completion, then reflects the outcome in the page.
+  const watchJob = async (jobId: string) => {
+    try {
+      const job = await pollInsightJob(jobId)
+
+      if (job.status === 'failed') {
+        toast.error(job.error ?? 'Failed to generate insights')
+        return
+      }
+
+      setAiResponse(job.result ?? null)
+      setNotice(job.notice ?? null)
+
+      if (job.source === 'insufficient_data') {
+        toast('Not enough sleep data yet')
+      } else if (job.notice) {
+        toast('Insights generated from built-in rules')
+      } else {
+        toast.success('Insights generated!')
+      }
+
       const insightsRes = await insightsApi.getList({ limit: '10' })
       setInsights(insightsRes.data)
     } catch (error) {
-      console.error('Failed to generate insights:', error)
-      toast.error('Failed to generate insights')
+      if (error instanceof InsightJobTimeoutError) {
+        toast.error('Insight generation is taking longer than expected. Try again shortly.')
+      } else {
+        console.error('Failed while polling insight job:', error)
+        toast.error('Failed to generate insights')
+      }
     } finally {
       setGenerating(false)
     }
@@ -161,6 +203,15 @@ export default function InsightsPage() {
           </button>
         </div>
       </div>
+
+      {notice && (
+        <div className="rounded-lg border border-amber-500/50 bg-amber-900/20 p-4">
+          <div className="flex items-start space-x-3">
+            <ExclamationTriangleIcon className="h-5 w-5 text-amber-500 flex-shrink-0 mt-0.5" />
+            <p className="text-amber-200 text-sm">{notice}</p>
+          </div>
+        </div>
+      )}
 
       {/* AI Response */}
       {aiResponse && (

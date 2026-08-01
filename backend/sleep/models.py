@@ -81,7 +81,15 @@ class SleepRecord(models.Model):
     class Meta:
         db_table = 'sleep_records'
         ordering = ['-date_of_sleep', '-start_time']
-        unique_together = [['user', 'external_id']]
+        constraints = [
+            # Keeps Fitbit sync idempotent. Conditional because manual entries
+            # leave external_id blank, and every blank would otherwise collide.
+            models.UniqueConstraint(
+                fields=['user', 'external_id'],
+                condition=~models.Q(external_id=''),
+                name='unique_user_external_id',
+            ),
+        ]
         indexes = [
             models.Index(fields=['user', 'date_of_sleep']),
             models.Index(fields=['user', 'start_time']),

@@ -161,10 +161,20 @@ FITBIT_CLIENT_ID = os.environ.get('FITBIT_CLIENT_ID', '')
 FITBIT_CLIENT_SECRET = os.environ.get('FITBIT_CLIENT_SECRET', '')
 FITBIT_REDIRECT_URI = os.environ.get('FITBIT_REDIRECT_URI', 'http://localhost:3000/fitbit/callback')
 
-# AI provider settings for sleep insights ('openai' or 'gemini')
-AI_PROVIDER = os.environ.get('AI_PROVIDER', 'openai')
-OPENAI_API_KEY = os.environ.get('OPENAI_API_KEY', '')
-GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY', '')
+# Local model (Ollama) settings for sleep insights.
+# In production OLLAMA_BASE_URL points at an HTTPS reverse proxy that checks
+# OLLAMA_API_KEY; locally it points at a bare Ollama with no token.
+OLLAMA_BASE_URL = os.environ.get('OLLAMA_BASE_URL', 'http://localhost:11434')
+OLLAMA_API_KEY = os.environ.get('OLLAMA_API_KEY', '')
+OLLAMA_MODEL = os.environ.get('OLLAMA_MODEL', 'qwen2.5:7b-instruct')
+OLLAMA_TIMEOUT_SECONDS = int(os.environ.get('OLLAMA_TIMEOUT_SECONDS', '300'))
+OLLAMA_NUM_PREDICT = int(os.environ.get('OLLAMA_NUM_PREDICT', '1000'))
+OLLAMA_TEMPERATURE = float(os.environ.get('OLLAMA_TEMPERATURE', '0.7'))
+OLLAMA_INVALID_RETRIES = int(os.environ.get('OLLAMA_INVALID_RETRIES', '1'))
+
+# Must exceed OLLAMA_TIMEOUT_SECONDS * (1 + OLLAMA_INVALID_RETRIES), or the
+# reaper will kill jobs that are still legitimately generating.
+INSIGHT_JOB_STALE_MINUTES = int(os.environ.get('INSIGHT_JOB_STALE_MINUTES', '15'))
 
 # Logging
 LOGGING = {

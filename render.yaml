@@ -37,5 +37,7 @@ services:
         sync: false
       - key: FITBIT_REDIRECT_URI
         sync: false
-      - key: OPENAI_API_KEY
+      - key: OLLAMA_BASE_URL
+        sync: false
+      - key: OLLAMA_API_KEY
         sync: false
