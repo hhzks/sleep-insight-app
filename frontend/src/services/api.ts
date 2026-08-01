@@ -85,6 +85,8 @@ export const fitbitApi = {
 // AI Insights API
 export const insightsApi = {
   generate: (days?: number) => api.post('/insights/generate/', { days }),
+  getJob: (jobId: string) => api.get(`/insights/jobs/${jobId}/`),
+  getActiveJob: () => api.get('/insights/jobs/active/'),
   getList: (params?: Record<string, string>) =>
     api.get('/insights/list/', { params }),
   getInsight: (id: number) => api.get(`/insights/${id}/`),
