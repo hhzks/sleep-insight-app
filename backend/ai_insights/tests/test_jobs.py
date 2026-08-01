@@ -1,17 +1,18 @@
 """
 Background execution, dedupe, and stale-job reaping.
 """
+import uuid
 from datetime import timedelta
 from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
-from django.test import TestCase, override_settings
+from django.test import TestCase, TransactionTestCase, override_settings
 from django.utils import timezone
 
-from ai_insights.jobs import reap_stale_jobs, run_insight_job, start_insight_job
+from ai_insights.jobs import _spawn_thread, reap_stale_jobs, run_insight_job, start_insight_job
 from ai_insights.models import InsightJob
 from ai_insights.providers.ollama import OllamaUnavailable
-from ai_insights.services import SOURCE_LOCAL_MODEL, SOURCE_RULE_BASED
+from ai_insights.services import SOURCE_LOCAL_MODEL, SOURCE_RULE_BASED, InsightsResult
 from sleep.models import SleepRecord
 
 User = get_user_model()
@@ -122,18 +123,32 @@ class RunInsightJobTests(TestCase):
 
     def test_unexpected_exception_marks_the_job_failed(self):
         job = InsightJob.objects.create(user=self.user, days=30)
-        with patch('ai_insights.jobs.generate_insights', side_effect=ValueError('boom')):
-            run_insight_job(job.id)
+        with self.assertLogs('ai_insights.jobs', 'ERROR'):
+            with patch('ai_insights.jobs.generate_insights', side_effect=ValueError('boom')):
+                run_insight_job(job.id)
         job.refresh_from_db()
         self.assertEqual(job.status, InsightJob.STATUS_FAILED)
         self.assertEqual(job.error_code, 'internal')
         self.assertIn('boom', job.error_detail)
 
     def test_missing_job_id_creates_nothing_and_does_not_raise(self):
-        import uuid
         before = InsightJob.objects.count()
         run_insight_job(uuid.uuid4())
         self.assertEqual(InsightJob.objects.count(), before)
+
+    def test_worker_thread_closes_its_connection(self):
+        """A real worker thread's connection is never inside an atomic block,
+
+        so the production path always takes the closing branch of the guard
+        in jobs.py. This is invisible to every other test here because they
+        all call run_insight_job synchronously inside TestCase's wrapping
+        transaction, which takes the other branch.
+        """
+        job = InsightJob.objects.create(user=self.user, days=30)
+        with patch('ai_insights.jobs.connection') as conn:
+            conn.in_atomic_block = False
+            run_insight_job(job.id, provider=FakeProvider(MODEL_PAYLOAD))
+        conn.close.assert_called_once()
 
 
 @override_settings(INSIGHT_JOB_STALE_MINUTES=15)
@@ -148,7 +163,8 @@ class ReapStaleJobsTests(TestCase):
             user=self.user, days=30, status=InsightJob.STATUS_RUNNING,
             started_at=timezone.now() - timedelta(minutes=20),
         )
-        self.assertEqual(reap_stale_jobs(), 1)
+        with self.assertLogs('ai_insights.jobs', 'ERROR'):
+            self.assertEqual(reap_stale_jobs(), 1)
         job.refresh_from_db()
         self.assertEqual(job.status, InsightJob.STATUS_FAILED)
         self.assertEqual(job.error_code, 'internal')
@@ -167,7 +183,24 @@ class ReapStaleJobsTests(TestCase):
         InsightJob.objects.filter(pk=job.pk).update(
             created_at=timezone.now() - timedelta(minutes=20)
         )
-        self.assertEqual(reap_stale_jobs(), 1)
+        with self.assertLogs('ai_insights.jobs', 'ERROR'):
+            self.assertEqual(reap_stale_jobs(), 1)
+        job.refresh_from_db()
+        self.assertEqual(job.status, InsightJob.STATUS_FAILED)
+
+    def test_reaps_a_running_job_with_a_null_started_at(self):
+        """A job flipped to running but never given a started_at (e.g. a
+
+        crash between the two field writes landing on the row) must not sit
+        immortal: started_at__lt excludes NULLs in SQL, so this needs its
+        own clause in the reaper's filter, falling back to created_at.
+        """
+        job = InsightJob.objects.create(user=self.user, days=30, status=InsightJob.STATUS_RUNNING)
+        InsightJob.objects.filter(pk=job.pk).update(
+            created_at=timezone.now() - timedelta(minutes=20)
+        )
+        with self.assertLogs('ai_insights.jobs', 'ERROR'):
+            self.assertEqual(reap_stale_jobs(), 1)
         job.refresh_from_db()
         self.assertEqual(job.status, InsightJob.STATUS_FAILED)
 
@@ -177,3 +210,39 @@ class ReapStaleJobsTests(TestCase):
             started_at=timezone.now() - timedelta(hours=3),
         )
         self.assertEqual(reap_stale_jobs(), 0)
+
+
+class SpawnThreadTests(TransactionTestCase):
+    """_spawn_thread must actually run the job on a genuinely separate thread.
+
+    Every other test in this file either patches _spawn_thread out entirely
+    (StartInsightJobTests) or calls run_insight_job directly on the test
+    thread (RunInsightJobTests). Neither exercises threading.Thread(...)
+    construction itself — e.g. a malformed `args=` tuple would raise inside
+    the spawned thread, be silently swallowed by threading's default
+    excepthook, and never fail any of those tests.
+
+    TransactionTestCase (not TestCase) is required: TestCase wraps the test
+    body in an outer transaction that never really commits to the database,
+    so a second connection opened by a genuinely separate thread would not
+    see the row start_insight_job's transaction created.
+    """
+
+    def setUp(self):
+        self.user = User.objects.create(email='sleeper@example.com', firebase_uid='uid-1')
+
+    @patch('ai_insights.jobs.generate_insights')
+    def test_spawned_thread_runs_the_job_to_a_terminal_status(self, mock_generate):
+        # Stubbed so this never reaches the network — generate_insights is
+        # what would otherwise construct a real OllamaClient and try to
+        # contact a real Ollama server.
+        mock_generate.return_value = InsightsResult(payload=MODEL_PAYLOAD, source=SOURCE_LOCAL_MODEL)
+
+        job = InsightJob.objects.create(user=self.user, days=30)
+        thread = _spawn_thread(job.id)
+        thread.join(timeout=5)
+
+        self.assertFalse(thread.is_alive())
+        job.refresh_from_db()
+        self.assertEqual(job.status, InsightJob.STATUS_SUCCEEDED)
+        self.assertEqual(job.source, SOURCE_LOCAL_MODEL)

@@ -14,7 +14,8 @@ import threading
 from datetime import timedelta
 
 from django.conf import settings
-from django.db import connection
+from django.contrib.auth import get_user_model
+from django.db import connection, transaction
 from django.db.models import Q
 from django.utils import timezone
 
@@ -29,16 +30,30 @@ def start_insight_job(user, days):
 
     If the user already has an active job, that job is returned untouched and
     no new work is spawned.
+
+    The read-then-create below is a check-then-act race: without a lock, two
+    concurrent callers for the same user (two tabs, a client retry) could
+    both see "no active job" and both spawn a generation — exactly what
+    already_running exists to prevent, and expensive to double up on a
+    CPU-only box. A row lock on the user serializes concurrent callers so
+    only one wins the create.
     """
     reap_stale_jobs()
 
-    existing = InsightJob.objects.filter(
-        user=user, status__in=InsightJob.ACTIVE_STATUSES
-    ).first()
-    if existing is not None:
-        return existing, True
+    User = get_user_model()
+    with transaction.atomic():
+        User.objects.select_for_update().get(pk=user.pk)
 
-    job = InsightJob.objects.create(user=user, days=days)
+        existing = InsightJob.objects.filter(
+            user=user, status__in=InsightJob.ACTIVE_STATUSES
+        ).first()
+        if existing is not None:
+            return existing, True
+
+        job = InsightJob.objects.create(user=user, days=days)
+
+    # Spawned after the transaction commits, so the worker thread's own
+    # connection is guaranteed to see the row.
     _spawn_thread(job.id)
     return job, False
 
@@ -47,6 +62,7 @@ def _spawn_thread(job_id):
     """Start the worker thread. Patched in tests to run inline."""
     thread = threading.Thread(target=run_insight_job, args=(job_id,), daemon=True)
     thread.start()
+    return thread
 
 
 def run_insight_job(job_id, provider=None):
@@ -102,6 +118,10 @@ def reap_stale_jobs():
 
     stale = InsightJob.objects.filter(
         Q(status=InsightJob.STATUS_RUNNING, started_at__lt=cutoff)
+        # A running job with no started_at would otherwise never match
+        # started_at__lt (SQL excludes NULLs from any comparison), and would
+        # sit immortal. Fall back to created_at for that case.
+        | Q(status=InsightJob.STATUS_RUNNING, started_at__isnull=True, created_at__lt=cutoff)
         | Q(status=InsightJob.STATUS_QUEUED, created_at__lt=cutoff)
     )
 
