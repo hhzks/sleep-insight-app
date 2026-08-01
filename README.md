@@ -113,7 +113,7 @@ Oracle Cloud Ampere A1 instance (ARM64, CPU-only), but any Linux box works.
    **Leave Ollama bound to `127.0.0.1`.** It has no authentication of its own;
    Caddy is what stands between it and the internet.
 
-3. **Point a DNS name at the instance** — a free DuckDNS subdomain is fine.
+3. **Point a DNS name at the instance**
    Caddy needs a resolvable hostname to obtain a Let's Encrypt certificate.
 
 4. **Install Caddy** and use this `Caddyfile`, which rejects anything without
