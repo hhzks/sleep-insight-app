@@ -249,6 +249,18 @@ List endpoints are paginated (20 per page).
 
 ## Development
 
+### Tests
+
+```bash
+# Backend (Django test runner)
+cd backend
+python manage.py test
+
+# Frontend (Vitest)
+cd frontend
+npm test
+```
+
 ### Linting
 
 ```bash

@@ -14,9 +14,15 @@ const api: AxiosInstance = axios.create({
 api.interceptors.request.use(
   async (config: InternalAxiosRequestConfig) => {
     const token = await getIdToken()
-    if (token) {
-      config.headers.Authorization = `Bearer ${token}`
+    if (!token) {
+      // Sending this anyway would come back as an opaque 401 that looks like a
+      // server problem. Fail here instead, where the real cause is visible.
+      throw new Error(
+        `Not signed in: no Firebase ID token available, so ` +
+          `${config.method?.toUpperCase()} ${config.url} was not sent.`
+      )
     }
+    config.headers.Authorization = `Bearer ${token}`
     return config
   },
   (error) => {
