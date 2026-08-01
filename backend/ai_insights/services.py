@@ -5,11 +5,11 @@ Uses OpenAI or Google Gemini to generate personalized sleep insights.
 import json
 from datetime import datetime, timedelta
 from django.conf import settings
-from django.db.models import Avg, Count, Sum, Min, Max
 from django.utils import timezone
 
-from sleep.models import SleepRecord, SleepGoal
 from .models import SleepInsight, SleepTip
+from .rule_based import generate_rule_based_insights, insufficient_data_payload
+from .summary import build_sleep_summary
 
 
 class AIInsightsService:
@@ -23,81 +23,7 @@ class AIInsightsService:
     
     def get_sleep_data_summary(self, days=30):
         """Get a summary of user's sleep data for AI analysis."""
-        end_date = timezone.now().date()
-        start_date = end_date - timedelta(days=days)
-        
-        records = SleepRecord.objects.filter(
-            user=self.user,
-            date_of_sleep__gte=start_date,
-            is_main_sleep=True
-        ).order_by('date_of_sleep')
-        
-        if not records.exists():
-            return None
-        
-        # Aggregate statistics
-        stats = records.aggregate(
-            avg_duration=Avg('duration_minutes'),
-            avg_asleep=Avg('minutes_asleep'),
-            avg_efficiency=Avg('efficiency'),
-            avg_deep=Avg('deep_sleep_minutes'),
-            avg_rem=Avg('rem_sleep_minutes'),
-            avg_light=Avg('light_sleep_minutes'),
-            total_records=Count('id'),
-        )
-        
-        # Calculate sleep consistency (std dev of sleep times)
-        sleep_times = []
-        for record in records:
-            if record.start_time:
-                sleep_times.append(record.start_time.hour + record.start_time.minute / 60)
-        
-        consistency_score = 0
-        if len(sleep_times) > 1:
-            import statistics
-            try:
-                std_dev = statistics.stdev(sleep_times)
-                consistency_score = max(0, 100 - (std_dev * 20))  # Lower std dev = higher score
-            except:
-                consistency_score = 50
-        
-        # Get user's sleep goal
-        try:
-            goal = SleepGoal.objects.get(user=self.user)
-            target_hours = float(goal.target_hours)
-        except SleepGoal.DoesNotExist:
-            target_hours = 8.0
-        
-        # Recent trends (last 7 days vs previous 7 days)
-        recent_records = records.filter(date_of_sleep__gte=end_date - timedelta(days=7))
-        older_records = records.filter(
-            date_of_sleep__lt=end_date - timedelta(days=7),
-            date_of_sleep__gte=end_date - timedelta(days=14)
-        )
-        
-        recent_avg = recent_records.aggregate(avg=Avg('minutes_asleep'))['avg'] or 0
-        older_avg = older_records.aggregate(avg=Avg('minutes_asleep'))['avg'] or 0
-        
-        trend = 'stable'
-        if recent_avg > older_avg * 1.1:
-            trend = 'improving'
-        elif recent_avg < older_avg * 0.9:
-            trend = 'declining'
-        
-        return {
-            'period_days': days,
-            'total_records': records.count(),
-            'avg_sleep_hours': round((stats['avg_asleep'] or 0) / 60, 2),
-            'avg_time_in_bed_hours': round((stats['avg_duration'] or 0) / 60, 2),
-            'avg_efficiency': round(stats['avg_efficiency'] or 0, 1),
-            'avg_deep_sleep_minutes': round(stats['avg_deep'] or 0, 0),
-            'avg_rem_sleep_minutes': round(stats['avg_rem'] or 0, 0),
-            'avg_light_sleep_minutes': round(stats['avg_light'] or 0, 0),
-            'consistency_score': round(consistency_score, 1),
-            'target_hours': target_hours,
-            'sleep_debt_hours': round(max(0, (target_hours - (stats['avg_asleep'] or 0) / 60) * days / 7), 1),
-            'trend': trend,
-        }
+        return build_sleep_summary(self.user, days)
     
     def generate_insights_with_ai(self, sleep_summary):
         """Generate insights using configured AI provider (OpenAI or Gemini)."""
@@ -212,135 +138,14 @@ Be encouraging but honest. Focus on specific, actionable advice."""
     
     def _generate_rule_based_insights(self, sleep_summary):
         """Generate insights using rule-based logic when AI is unavailable."""
-        insights = []
-        tips = []
-        score = 70  # Base score
-        
-        avg_sleep = sleep_summary['avg_sleep_hours']
-        target = sleep_summary['target_hours']
-        efficiency = sleep_summary['avg_efficiency']
-        consistency = sleep_summary['consistency_score']
-        
-        # Sleep duration analysis
-        if avg_sleep < target - 1:
-            insights.append({
-                'type': 'alert',
-                'priority': 'high',
-                'title': 'Sleep Duration Below Target',
-                'content': f"You're averaging {avg_sleep:.1f} hours of sleep, which is {target - avg_sleep:.1f} hours below your {target}-hour target. Chronic sleep deprivation can affect your health, mood, and cognitive performance."
-            })
-            tips.append("Try going to bed 30 minutes earlier tonight")
-            score -= 15
-        elif avg_sleep >= target:
-            insights.append({
-                'type': 'pattern',
-                'priority': 'low',
-                'title': 'Meeting Sleep Goals',
-                'content': f"Great job! You're averaging {avg_sleep:.1f} hours of sleep, meeting or exceeding your {target}-hour target."
-            })
-            score += 10
-        
-        # Efficiency analysis
-        if efficiency < 85:
-            insights.append({
-                'type': 'recommendation',
-                'priority': 'medium',
-                'title': 'Room for Efficiency Improvement',
-                'content': f"Your sleep efficiency is {efficiency:.0f}%, meaning you spend significant time awake in bed. Consider only going to bed when truly sleepy and getting up if you can't sleep after 20 minutes."
-            })
-            tips.append("Reserve your bed only for sleep - avoid screens and work in bed")
-            score -= 10
-        elif efficiency >= 90:
-            insights.append({
-                'type': 'pattern',
-                'priority': 'low',
-                'title': 'Excellent Sleep Efficiency',
-                'content': f"Your sleep efficiency of {efficiency:.0f}% is excellent! This indicates healthy sleep patterns."
-            })
-            score += 5
-        
-        # Consistency analysis
-        if consistency < 70:
-            insights.append({
-                'type': 'recommendation',
-                'priority': 'medium',
-                'title': 'Irregular Sleep Schedule',
-                'content': "Your sleep schedule varies significantly from day to day. A consistent sleep-wake schedule helps regulate your circadian rhythm and improves sleep quality."
-            })
-            tips.append("Try to go to bed and wake up at the same time every day, even on weekends")
-            score -= 10
-        elif consistency >= 85:
-            score += 5
-        
-        # Deep sleep analysis
-        if sleep_summary['avg_deep_sleep_minutes'] and sleep_summary['avg_deep_sleep_minutes'] < 45:
-            insights.append({
-                'type': 'recommendation',
-                'priority': 'medium',
-                'title': 'Deep Sleep Could Be Better',
-                'content': "Your deep sleep duration is below optimal levels. Deep sleep is crucial for physical recovery. Regular exercise (not too close to bedtime) can help increase deep sleep."
-            })
-            tips.append("Avoid alcohol before bed - it reduces deep sleep quality")
-        
-        # Trend analysis
-        if sleep_summary['trend'] == 'declining':
-            insights.append({
-                'type': 'alert',
-                'priority': 'high',
-                'title': 'Sleep Quality Declining',
-                'content': "Your sleep has been declining over the past week compared to before. Consider what changes might be affecting your rest."
-            })
-            score -= 10
-        elif sleep_summary['trend'] == 'improving':
-            insights.append({
-                'type': 'pattern',
-                'priority': 'low',
-                'title': 'Sleep Improving',
-                'content': "Your sleep has been improving recently. Keep up the good work with whatever changes you've made!"
-            })
-            score += 5
-        
-        # Ensure we have some tips
-        if not tips:
-            tips = [
-                "Maintain a cool, dark, and quiet sleep environment",
-                "Avoid caffeine at least 6 hours before bedtime",
-                "Create a relaxing bedtime routine to signal your body it's time to sleep"
-            ]
-        
-        # Ensure score is in valid range
-        score = max(0, min(100, score))
-        
-        # Overall assessment
-        if score >= 80:
-            assessment = f"Your sleep health is good! You're averaging {avg_sleep:.1f} hours with {efficiency:.0f}% efficiency."
-        elif score >= 60:
-            assessment = f"Your sleep health is moderate. There are opportunities to improve your {avg_sleep:.1f}-hour average and {efficiency:.0f}% efficiency."
-        else:
-            assessment = f"Your sleep needs attention. With {avg_sleep:.1f} hours average and {efficiency:.0f}% efficiency, focused improvements could significantly benefit your health."
-        
-        return {
-            'overall_assessment': assessment,
-            'score': score,
-            'insights': insights,
-            'tips': tips[:3]
-        }
+        return generate_rule_based_insights(sleep_summary)
     
     def generate_and_save_insights(self, days=30):
         """Generate and save insights for the user."""
         sleep_summary = self.get_sleep_data_summary(days)
         
         if not sleep_summary:
-            return {
-                'overall_assessment': "Not enough sleep data to generate insights. Start tracking your sleep to receive personalized recommendations!",
-                'score': None,
-                'insights': [],
-                'tips': [
-                    "Log your sleep manually or connect Fitbit for automatic tracking",
-                    "Aim for 7-9 hours of sleep per night",
-                    "Maintain a consistent sleep schedule"
-                ]
-            }
+            return insufficient_data_payload()
         
         ai_insights = self.generate_insights_with_ai(sleep_summary)
         
