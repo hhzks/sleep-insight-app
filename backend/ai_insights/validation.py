@@ -11,6 +11,11 @@ _INSIGHT_ITEM = INSIGHTS_SCHEMA['properties']['insights']['items']
 VALID_TYPES = _INSIGHT_ITEM['properties']['type']['enum']
 VALID_PRIORITIES = _INSIGHT_ITEM['properties']['priority']['enum']
 
+# Mirrors SleepInsight.title's column width (CharField(max_length=255)).
+# Enforced here so an over-length title is rejected and retried/falls back
+# instead of reaching persist_insights and raising a DB-level DataError.
+MAX_TITLE_LENGTH = 255
+
 
 class InvalidInsightsPayload(Exception):
     """The model returned JSON that does not match the expected shape."""
@@ -47,6 +52,10 @@ def validate_insights_payload(payload):
                 raise InvalidInsightsPayload(f'insights[{index}] missing key: {key}')
             if not isinstance(insight[key], str):
                 raise InvalidInsightsPayload(f'insights[{index}].{key} must be a string')
+        if len(insight['title']) > MAX_TITLE_LENGTH:
+            raise InvalidInsightsPayload(
+                f'insights[{index}].title exceeds {MAX_TITLE_LENGTH} characters'
+            )
         if insight['type'] not in VALID_TYPES:
             raise InvalidInsightsPayload(f'insights[{index}].type invalid: {insight["type"]}')
         if insight['priority'] not in VALID_PRIORITIES:

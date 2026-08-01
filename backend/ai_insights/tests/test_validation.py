@@ -85,3 +85,28 @@ class ValidateInsightsPayloadTests(SimpleTestCase):
 
     def test_accepts_empty_tips(self):
         self.assertEqual(validate_insights_payload(payload(tips=[]))['tips'], [])
+
+    def test_rejects_bool_score(self):
+        # isinstance(True, int) is True in Python, so score=True would
+        # silently pass an isinstance(score, int) check. Locks in the
+        # deliberate `isinstance(score, bool)` exclusion in validation.py.
+        with self.assertRaises(InvalidInsightsPayload):
+            validate_insights_payload(payload(score=True))
+
+    def test_rejects_title_over_255_characters(self):
+        with self.assertRaises(InvalidInsightsPayload):
+            validate_insights_payload(payload(insights=[{
+                'type': 'alert',
+                'priority': 'high',
+                'title': 'T' * 256,
+                'content': 'C',
+            }]))
+
+    def test_accepts_title_at_255_characters(self):
+        result = validate_insights_payload(payload(insights=[{
+            'type': 'alert',
+            'priority': 'high',
+            'title': 'T' * 255,
+            'content': 'C',
+        }]))
+        self.assertEqual(len(result['insights'][0]['title']), 255)

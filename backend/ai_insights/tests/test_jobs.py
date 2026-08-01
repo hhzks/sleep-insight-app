@@ -104,7 +104,8 @@ class RunInsightJobTests(TestCase):
 
     def test_success_stores_result_and_source(self):
         job = InsightJob.objects.create(user=self.user, days=30)
-        run_insight_job(job.id, provider=FakeProvider(MODEL_PAYLOAD))
+        with self.assertLogs('ai_insights.services', 'INFO'):
+            run_insight_job(job.id, provider=FakeProvider(MODEL_PAYLOAD))
         job.refresh_from_db()
         self.assertEqual(job.status, InsightJob.STATUS_SUCCEEDED)
         self.assertEqual(job.source, SOURCE_LOCAL_MODEL)
@@ -114,7 +115,8 @@ class RunInsightJobTests(TestCase):
 
     def test_model_failure_still_succeeds_with_rule_based_source(self):
         job = InsightJob.objects.create(user=self.user, days=30)
-        run_insight_job(job.id, provider=FakeProvider(OllamaUnavailable('refused')))
+        with self.assertLogs('ai_insights.services', 'ERROR'):
+            run_insight_job(job.id, provider=FakeProvider(OllamaUnavailable('refused')))
         job.refresh_from_db()
         self.assertEqual(job.status, InsightJob.STATUS_SUCCEEDED)
         self.assertEqual(job.source, SOURCE_RULE_BASED)
@@ -133,7 +135,8 @@ class RunInsightJobTests(TestCase):
 
     def test_missing_job_id_creates_nothing_and_does_not_raise(self):
         before = InsightJob.objects.count()
-        run_insight_job(uuid.uuid4())
+        with self.assertLogs('ai_insights.jobs', 'WARNING'):
+            run_insight_job(uuid.uuid4())
         self.assertEqual(InsightJob.objects.count(), before)
 
     def test_worker_thread_closes_its_connection(self):
@@ -145,9 +148,10 @@ class RunInsightJobTests(TestCase):
         transaction, which takes the other branch.
         """
         job = InsightJob.objects.create(user=self.user, days=30)
-        with patch('ai_insights.jobs.connection') as conn:
-            conn.in_atomic_block = False
-            run_insight_job(job.id, provider=FakeProvider(MODEL_PAYLOAD))
+        with self.assertLogs('ai_insights.services', 'INFO'):
+            with patch('ai_insights.jobs.connection') as conn:
+                conn.in_atomic_block = False
+                run_insight_job(job.id, provider=FakeProvider(MODEL_PAYLOAD))
         conn.close.assert_called_once()
 
 

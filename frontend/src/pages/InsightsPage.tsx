@@ -104,7 +104,9 @@ export default function InsightsPage() {
       setAiResponse(job.result ?? null)
       setNotice(job.notice ?? null)
 
-      if (job.notice) {
+      if (job.source === 'insufficient_data') {
+        toast('Not enough sleep data yet')
+      } else if (job.notice) {
         toast('Insights generated from built-in rules')
       } else {
         toast.success('Insights generated!')

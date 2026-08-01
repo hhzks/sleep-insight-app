@@ -252,7 +252,12 @@ See `backend/.env.example` for the full template.
 | `OLLAMA_API_KEY` | Ollama bearer token (blank locally; set for production proxies) |
 | `OLLAMA_MODEL` | Model name (defaults to `qwen2.5:7b-instruct`) |
 | `OLLAMA_TIMEOUT_SECONDS` | Max generation time in seconds (defaults to 300) |
+| `OLLAMA_NUM_PREDICT` | Max tokens the model may generate per response (defaults to 1000) |
+| `OLLAMA_TEMPERATURE` | Sampling temperature for generation (defaults to 0.7) |
+| `OLLAMA_INVALID_RETRIES` | Retries after malformed model output before falling back to rules (defaults to 1) |
 | `INSIGHT_JOB_STALE_MINUTES` | Max job age before reaper kills it (defaults to 15) |
+
+`INSIGHT_JOB_STALE_MINUTES * 60` must exceed `OLLAMA_TIMEOUT_SECONDS * (1 + OLLAMA_INVALID_RETRIES)`, or the reaper can kill jobs that are still legitimately generating — so raising the timeout or the retry count requires raising the stale window too.
 
 ### Frontend Environment Variables
 

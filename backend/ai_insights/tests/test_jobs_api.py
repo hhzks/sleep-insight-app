@@ -137,7 +137,8 @@ class StaleJobReapingOnPollTests(TestCase):
             user=self.user, days=30, status=InsightJob.STATUS_RUNNING,
             started_at=timezone.now() - timedelta(minutes=30),
         )
-        response = self.client.get(f'/api/insights/jobs/{job.id}/')
+        with self.assertLogs('ai_insights.jobs', 'ERROR'):
+            response = self.client.get(f'/api/insights/jobs/{job.id}/')
         self.assertEqual(response.data['status'], 'failed')
         self.assertEqual(response.data['error'], InsightJob.FAILED_MESSAGE)
 

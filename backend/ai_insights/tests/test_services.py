@@ -4,7 +4,7 @@ Insight generation orchestration: model, validation, fallback, persistence.
 from datetime import timedelta
 
 from django.contrib.auth import get_user_model
-from django.test import TestCase
+from django.test import TestCase, override_settings
 from django.utils import timezone
 
 from ai_insights.models import SleepInsight
@@ -77,56 +77,82 @@ class GenerateInsightsTests(TestCase):
 
     def test_model_success_reports_local_model_source(self):
         provider = FakeProvider([MODEL_PAYLOAD])
-        result = generate_insights(self.user, days=30, provider=provider)
+        with self.assertLogs('ai_insights.services', 'INFO') as logs:
+            result = generate_insights(self.user, days=30, provider=provider)
         self.assertEqual(result.source, SOURCE_LOCAL_MODEL)
         self.assertEqual(result.payload['score'], 72)
         self.assertIsNone(result.error_code)
         self.assertEqual(provider.calls, 1)
+        self.assertIn('insight generation succeeded', logs.output[0])
 
     def test_model_success_persists_insight_rows(self):
-        generate_insights(self.user, days=30, provider=FakeProvider([MODEL_PAYLOAD]))
+        with self.assertLogs('ai_insights.services', 'INFO'):
+            generate_insights(self.user, days=30, provider=FakeProvider([MODEL_PAYLOAD]))
         rows = SleepInsight.objects.filter(user=self.user)
         self.assertEqual(rows.count(), 1)
         self.assertEqual(rows.first().title, 'Extend Your Sleep Window')
 
     def test_unreachable_server_falls_back_to_rules(self):
         provider = FakeProvider([OllamaUnavailable('refused')])
-        result = generate_insights(self.user, days=30, provider=provider)
+        with self.assertLogs('ai_insights.services', 'ERROR') as logs:
+            result = generate_insights(self.user, days=30, provider=provider)
         self.assertEqual(result.source, SOURCE_RULE_BASED)
         self.assertEqual(result.error_code, 'unreachable')
         self.assertTrue(result.payload['insights'])
+        self.assertIn('code=unreachable', logs.output[0])
+        self.assertIn(f'user_id={self.user.id}', logs.output[0])
 
     def test_timeout_falls_back_with_timeout_code(self):
-        result = generate_insights(
-            self.user, days=30, provider=FakeProvider([OllamaTimeout('slow')])
-        )
+        with self.assertLogs('ai_insights.services', 'ERROR') as logs:
+            result = generate_insights(
+                self.user, days=30, provider=FakeProvider([OllamaTimeout('slow')])
+            )
         self.assertEqual(result.source, SOURCE_RULE_BASED)
         self.assertEqual(result.error_code, 'timeout')
+        self.assertIn('code=timeout', logs.output[0])
 
     def test_fallback_still_persists_insight_rows(self):
-        generate_insights(
-            self.user, days=30, provider=FakeProvider([OllamaUnavailable('refused')])
-        )
+        with self.assertLogs('ai_insights.services', 'ERROR'):
+            generate_insights(
+                self.user, days=30, provider=FakeProvider([OllamaUnavailable('refused')])
+            )
         self.assertTrue(SleepInsight.objects.filter(user=self.user).exists())
 
     def test_invalid_output_is_retried_once_then_succeeds(self):
         provider = FakeProvider([{'nonsense': True}, MODEL_PAYLOAD])
-        result = generate_insights(self.user, days=30, provider=provider)
+        with self.assertLogs('ai_insights.services', 'INFO'):
+            result = generate_insights(self.user, days=30, provider=provider)
         self.assertEqual(provider.calls, 2)
         self.assertEqual(result.source, SOURCE_LOCAL_MODEL)
 
     def test_invalid_output_twice_falls_back(self):
         provider = FakeProvider([{'nonsense': True}, {'still': 'wrong'}])
-        result = generate_insights(self.user, days=30, provider=provider)
+        with self.assertLogs('ai_insights.services', 'ERROR') as logs:
+            result = generate_insights(self.user, days=30, provider=provider)
         self.assertEqual(provider.calls, 2)
         self.assertEqual(result.source, SOURCE_RULE_BASED)
         self.assertEqual(result.error_code, 'invalid_response')
+        self.assertIn('code=invalid_response', logs.output[0])
 
     def test_error_detail_is_recorded_for_the_operator(self):
-        result = generate_insights(
-            self.user, days=30, provider=FakeProvider([OllamaUnavailable('refused')])
-        )
+        with self.assertLogs('ai_insights.services', 'ERROR') as logs:
+            result = generate_insights(
+                self.user, days=30, provider=FakeProvider([OllamaUnavailable('refused')])
+            )
         self.assertIn('refused', result.error_detail)
+        self.assertIn('refused', logs.output[0])
+
+    @override_settings(OLLAMA_API_KEY='secret-token')
+    def test_token_is_never_logged_on_fallback(self):
+        """The operator log names the model and base URL for debugging, but
+
+        must never carry the bearer token — a future refactor that logs the
+        client config wholesale would leak it into the log aggregator.
+        """
+        provider = FakeProvider([OllamaUnavailable('refused')])
+        with self.assertLogs('ai_insights.services', 'ERROR') as logs:
+            generate_insights(self.user, days=30, provider=provider)
+        self.assertNotIn('secret-token', '\n'.join(logs.output))
 
 
 class GenerateInsightsWithoutDataTests(TestCase):

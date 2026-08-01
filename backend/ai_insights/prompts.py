@@ -23,7 +23,7 @@ INSIGHTS_SCHEMA = {
                 "properties": {
                     "type": {"type": "string", "enum": ["pattern", "recommendation", "alert"]},
                     "priority": {"type": "string", "enum": ["low", "medium", "high"]},
-                    "title": {"type": "string"},
+                    "title": {"type": "string", "maxLength": 255},
                     "content": {"type": "string"},
                 },
                 "required": ["type", "priority", "title", "content"],

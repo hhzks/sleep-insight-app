@@ -106,11 +106,10 @@ def generate_insights(user, days=30, provider=None):
             source=SOURCE_INSUFFICIENT_DATA,
         )
 
-    if provider is None:
-        provider = OllamaClient()
-
     started = time.monotonic()
     try:
+        if provider is None:
+            provider = OllamaClient()
         payload = _call_model(provider, sleep_summary)
     except Exception as exc:
         error_code = _error_code_for(exc)
@@ -152,7 +151,7 @@ def persist_insights(user, payload, days):
             user=user,
             insight_type=insight.get('type', 'recommendation'),
             priority=insight.get('priority', 'medium'),
-            title=insight.get('title', ''),
+            title=insight.get('title', '')[:255],
             content=insight.get('content', ''),
             start_date=start_date,
             end_date=end_date,
