@@ -46,10 +46,24 @@ class Command(BaseCommand):
             self.stderr.write(f'FAILED: {exc}')
             sys.exit(1)
         except OllamaAuthError as exc:
-            self.stderr.write(
-                f'FAILED: the server rejected our token ({exc}). Check that '
-                'OLLAMA_API_KEY matches the token your reverse proxy expects.'
-            )
+            if exc.status_code == 403:
+                # Caddy's auth rule answers 401, so a 403 means our token was
+                # accepted and the rejection came from further in - almost
+                # always Ollama refusing a non-local Host header.
+                self.stderr.write(
+                    f'FAILED: rejected with HTTP 403 ({exc}). Your token was most '
+                    'likely ACCEPTED - the reverse proxy answers 401 for a bad '
+                    'token. A 403 usually means Ollama itself refused the request '
+                    'because the forwarded Host header is not local. Add '
+                    '"header_up Host {upstream_hostport}" to the reverse_proxy '
+                    'block in your Caddyfile. Confirm on the server with: '
+                    'curl -i -H "Host: example.com" http://127.0.0.1:11434/api/tags'
+                )
+            else:
+                self.stderr.write(
+                    f'FAILED: the server rejected our token ({exc}). Check that '
+                    'OLLAMA_API_KEY matches the token your reverse proxy expects.'
+                )
             sys.exit(1)
         except OllamaTimeout as exc:
             self.stderr.write(

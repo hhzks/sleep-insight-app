@@ -159,6 +159,19 @@ class OllamaClientFailureTests(SimpleTestCase):
             OllamaClient().generate('s', 'u', {})
 
     @patch('ai_insights.providers.ollama.requests.post')
+    def test_auth_error_carries_the_status_code(self, mock_post):
+        """401 and 403 need different remedies, so the code must survive.
+
+        A 401 is the reverse proxy rejecting our token; a 403 is usually
+        Ollama refusing a non-local Host header, where the token was fine.
+        """
+        for status in (401, 403):
+            mock_post.return_value = FakeResponse(status_code=status, text='nope')
+            with self.assertRaises(OllamaAuthError) as ctx:
+                OllamaClient().generate('s', 'u', {})
+            self.assertEqual(ctx.exception.status_code, status)
+
+    @patch('ai_insights.providers.ollama.requests.post')
     def test_500_raises_unavailable(self, mock_post):
         mock_post.return_value = FakeResponse(status_code=500, text='boom')
         with self.assertRaises(OllamaUnavailable):

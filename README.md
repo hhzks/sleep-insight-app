@@ -122,11 +122,21 @@ Oracle Cloud Ampere A1 instance (ARM64, CPU-only) since that's what I'm using, b
    llm.example.com {
        @unauthorized not header Authorization "Bearer {env.OLLAMA_TOKEN}"
        respond @unauthorized "Unauthorized" 401
-       reverse_proxy 127.0.0.1:11434
+       reverse_proxy 127.0.0.1:11434 {
+           header_up Host {upstream_hostport}
+       }
    }
    ```
 
    Put `OLLAMA_TOKEN` in Caddy's systemd environment, not in the Caddyfile.
+
+   The `header_up Host` line is required. Ollama rejects requests whose `Host`
+   header is not local — a DNS-rebinding protection — so without it Ollama
+   returns a bare `403` even when your token is correct. Rewriting the header
+   makes the proxy hop look like what it is: a local request. Verify with
+   `curl -H "Authorization: Bearer wrong" https://llm.example.com/api/tags`,
+   which should return `401` (Caddy rejecting you); a `403` there means the
+   request reached Ollama and this line is missing.
 
 5. **Open port 443 (and only 443!!).** On OCI this takes two steps, and skipping
    the second is will probably make the server appear dead:

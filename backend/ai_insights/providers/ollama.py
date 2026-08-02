@@ -28,7 +28,17 @@ class OllamaTimeout(OllamaError):
 
 
 class OllamaAuthError(OllamaError):
-    """The server rejected our credentials — a configuration problem."""
+    """The server rejected our credentials — a configuration problem.
+
+    Carries `status_code` because 401 and 403 mean different things here: a
+    401 comes from the reverse proxy rejecting our bearer token, while a 403
+    is usually Ollama itself rejecting a non-local Host header. The remedies
+    are unrelated, so callers need to tell them apart.
+    """
+
+    def __init__(self, message, status_code=None):
+        super().__init__(message)
+        self.status_code = status_code
 
 
 class OllamaInvalidResponse(OllamaError):
@@ -107,7 +117,8 @@ class OllamaClient:
         # proxy may echo the credential back at us.
         if response.status_code in (401, 403):
             raise OllamaAuthError(
-                f'server rejected our credentials (HTTP {response.status_code})'
+                f'server rejected our credentials (HTTP {response.status_code})',
+                status_code=response.status_code,
             )
         if response.status_code >= 400:
             raise OllamaUnavailable(f'server returned HTTP {response.status_code}')
