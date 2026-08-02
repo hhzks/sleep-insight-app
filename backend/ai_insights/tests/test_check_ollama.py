@@ -36,8 +36,28 @@ class CheckOllamaTests(SimpleTestCase):
 
     @patch('ai_insights.management.commands.check_ollama.OllamaClient')
     def test_reports_auth_failure_distinctly(self, mock_client):
-        mock_client.return_value.generate.side_effect = OllamaAuthError('rejected')
+        mock_client.return_value.generate.side_effect = OllamaAuthError(
+            'rejected', status_code=401
+        )
         out, err = StringIO(), StringIO()
         with self.assertRaises(SystemExit):
             call_command('check_ollama', stdout=out, stderr=err)
         self.assertIn('token', err.getvalue().lower())
+
+    @patch('ai_insights.management.commands.check_ollama.OllamaClient')
+    def test_403_points_at_the_host_header_not_the_token(self, mock_client):
+        """A 403 sends operators hunting for a token problem they do not have.
+
+        Caddy answers 401 for a bad token, so a 403 means the token was
+        accepted and Ollama refused the forwarded Host header instead.
+        """
+        mock_client.return_value.generate.side_effect = OllamaAuthError(
+            'server rejected our credentials (HTTP 403)', status_code=403
+        )
+        out, err = StringIO(), StringIO()
+        with self.assertRaises(SystemExit):
+            call_command('check_ollama', stdout=out, stderr=err)
+
+        message = err.getvalue()
+        self.assertIn('header_up Host', message)
+        self.assertIn('ACCEPTED', message)
