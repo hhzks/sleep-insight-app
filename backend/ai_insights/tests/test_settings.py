@@ -4,7 +4,10 @@ Configuration for the local model provider.
 from django.conf import settings
 from django.test import TestCase, override_settings
 
-from ai_insights.apps import check_stale_window_covers_worst_case
+from ai_insights.apps import (
+    check_ollama_base_url_has_a_scheme,
+    check_stale_window_covers_worst_case,
+)
 
 
 class OllamaSettingsTests(TestCase):
@@ -49,3 +52,27 @@ class StaleWindowSystemCheckTests(TestCase):
         self.assertEqual(errors[0].id, 'ai_insights.E001')
         self.assertIn('INSIGHT_JOB_STALE_MINUTES', errors[0].msg)
         self.assertIn('OLLAMA_TIMEOUT_SECONDS', errors[0].msg)
+
+
+class BaseUrlSchemeSystemCheckTests(TestCase):
+    """A schemeless OLLAMA_BASE_URL must fail at startup, not degrade silently.
+
+    `requests` raises MissingSchema for a URL with no scheme; that subclasses
+    RequestException, so the client reports OllamaUnavailable and every
+    generation falls back to rule-based analysis. Catching it at startup turns
+    a silent runtime degradation into a loud deploy-time failure.
+    """
+
+    def test_no_error_for_the_defaults(self):
+        self.assertEqual(check_ollama_base_url_has_a_scheme(None), [])
+
+    @override_settings(OLLAMA_BASE_URL='https://llm.example.com')
+    def test_no_error_for_https(self):
+        self.assertEqual(check_ollama_base_url_has_a_scheme(None), [])
+
+    @override_settings(OLLAMA_BASE_URL='llm.example.com')
+    def test_error_for_a_missing_scheme(self):
+        errors = check_ollama_base_url_has_a_scheme(None)
+        self.assertEqual(len(errors), 1)
+        self.assertEqual(errors[0].id, 'ai_insights.E002')
+        self.assertIn('OLLAMA_BASE_URL', errors[0].msg)

@@ -10,6 +10,9 @@ import json
 
 import requests
 from django.conf import settings
+from django.core.exceptions import ImproperlyConfigured
+
+VALID_SCHEMES = ('http://', 'https://')
 
 
 class OllamaError(Exception):
@@ -45,6 +48,17 @@ class OllamaClient:
         num_predict=None,
     ):
         self.base_url = (base_url or settings.OLLAMA_BASE_URL).rstrip('/')
+
+        # A schemeless URL makes requests raise MissingSchema, which subclasses
+        # RequestException and would surface as OllamaUnavailable — a config
+        # typo disguised as a server outage. Fail with the real reason instead.
+        if not self.base_url.startswith(VALID_SCHEMES):
+            raise ImproperlyConfigured(
+                f'OLLAMA_BASE_URL must start with http:// or https://, got '
+                f'{self.base_url!r}. Without a scheme every generation silently '
+                f'falls back to rule-based insights.'
+            )
+
         self.api_key = settings.OLLAMA_API_KEY if api_key is None else api_key
         self.model = model or settings.OLLAMA_MODEL
         self.timeout = timeout or settings.OLLAMA_TIMEOUT_SECONDS

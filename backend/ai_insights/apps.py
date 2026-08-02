@@ -9,6 +9,30 @@ class AiInsightsConfig(AppConfig):
 
     def ready(self):
         register(check_stale_window_covers_worst_case)
+        register(check_ollama_base_url_has_a_scheme)
+
+
+def check_ollama_base_url_has_a_scheme(app_configs, **kwargs):
+    """OLLAMA_BASE_URL must carry an http:// or https:// scheme.
+
+    Without one, requests raises MissingSchema on every call. That subclasses
+    RequestException, so the client reports it as OllamaUnavailable and the
+    app degrades to rule-based insights on every generation — a deploy-time
+    typo that looks like a server outage and is only visible in the logs.
+    """
+    base_url = settings.OLLAMA_BASE_URL
+
+    if not base_url.startswith(('http://', 'https://')):
+        return [
+            Error(
+                f'OLLAMA_BASE_URL ({base_url!r}) has no URL scheme. It must start '
+                'with http:// or https:// - a self-hosted server behind a TLS '
+                'reverse proxy wants https://. Without a scheme, every insight '
+                'generation silently falls back to rule-based analysis.',
+                id='ai_insights.E002',
+            )
+        ]
+    return []
 
 
 def check_stale_window_covers_worst_case(app_configs, **kwargs):

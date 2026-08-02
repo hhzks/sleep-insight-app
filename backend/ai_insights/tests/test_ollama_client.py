@@ -1,10 +1,11 @@
 """
-HTTP client for the self-hosted Ollama server.
+Tests for the HTTP client for the self-hosted Ollama server.
 """
 import json
 from unittest.mock import patch
 
 import requests
+from django.core.exceptions import ImproperlyConfigured
 from django.test import SimpleTestCase, override_settings
 
 from ai_insights.providers.ollama import (
@@ -100,6 +101,40 @@ class OllamaClientNoAuthTests(SimpleTestCase):
         mock_post.return_value = FakeResponse(body=chat_body(json.dumps(GOOD_PAYLOAD)))
         OllamaClient().generate('s', 'u', {})
         self.assertNotIn('Authorization', mock_post.call_args.kwargs['headers'])
+
+
+class OllamaClientBaseUrlTests(SimpleTestCase):
+    """A schemeless base URL is a config typo, not a server outage.
+
+    Without this guard `requests` raises MissingSchema, which subclasses
+    RequestException and so surfaces as OllamaUnavailable — the app then
+    degrades to rule-based insights on every generation and the real cause
+    is visible only in the logs.
+    """
+
+    @patch('ai_insights.providers.ollama.requests.post')
+    def test_rejects_a_base_url_with_no_scheme(self, mock_post):
+        with self.assertRaises(ImproperlyConfigured) as ctx:
+            OllamaClient(base_url='llm.example.com')
+        self.assertIn('OLLAMA_BASE_URL', str(ctx.exception))
+        mock_post.assert_not_called()
+
+    @override_settings(OLLAMA_BASE_URL='llm.example.com')
+    def test_rejects_a_schemeless_url_from_settings(self):
+        with self.assertRaises(ImproperlyConfigured):
+            OllamaClient()
+
+    def test_accepts_https(self):
+        self.assertEqual(
+            OllamaClient(base_url='https://llm.example.com').base_url,
+            'https://llm.example.com',
+        )
+
+    def test_accepts_plain_http_for_local_dev(self):
+        self.assertEqual(
+            OllamaClient(base_url='http://localhost:11434').base_url,
+            'http://localhost:11434',
+        )
 
 
 class OllamaClientFailureTests(SimpleTestCase):
