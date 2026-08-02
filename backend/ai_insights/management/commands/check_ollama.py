@@ -8,6 +8,7 @@ import sys
 import time
 
 from django.conf import settings
+from django.core.exceptions import ImproperlyConfigured
 from django.core.management.base import BaseCommand
 
 from ai_insights.prompts import INSIGHTS_SCHEMA
@@ -41,6 +42,9 @@ class Command(BaseCommand):
                 'an empty insights array, and an empty tips array.',
                 INSIGHTS_SCHEMA,
             )
+        except ImproperlyConfigured as exc:
+            self.stderr.write(f'FAILED: {exc}')
+            sys.exit(1)
         except OllamaAuthError as exc:
             self.stderr.write(
                 f'FAILED: the server rejected our token ({exc}). Check that '
