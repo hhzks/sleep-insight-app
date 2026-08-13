@@ -40,30 +40,30 @@ class GenerateEndpointTests(TestCase):
         for days_ago in range(1, 8):
             night(self.user, days_ago)
 
-    @patch('ai_insights.jobs._spawn_thread')
-    def test_returns_202_with_a_job_id(self, mock_spawn):
+    @patch('ai_insights.jobs._enqueue')
+    def test_returns_202_with_a_job_id(self, mock_enqueue):
         response = self.client.post('/api/insights/generate/', {'days': 30}, format='json')
         self.assertEqual(response.status_code, 202)
         self.assertEqual(response.data['status'], 'queued')
         self.assertFalse(response.data['already_running'])
         self.assertTrue(InsightJob.objects.filter(id=response.data['job_id']).exists())
 
-    @patch('ai_insights.jobs._spawn_thread')
-    def test_second_request_reports_already_running(self, mock_spawn):
+    @patch('ai_insights.jobs._enqueue')
+    def test_second_request_reports_already_running(self, mock_enqueue):
         first = self.client.post('/api/insights/generate/', {'days': 30}, format='json')
         second = self.client.post('/api/insights/generate/', {'days': 30}, format='json')
         self.assertEqual(second.status_code, 202)
         self.assertTrue(second.data['already_running'])
         self.assertEqual(first.data['job_id'], second.data['job_id'])
 
-    @patch('ai_insights.jobs._spawn_thread')
-    def test_clamps_the_days_parameter(self, mock_spawn):
+    @patch('ai_insights.jobs._enqueue')
+    def test_clamps_the_days_parameter(self, mock_enqueue):
         response = self.client.post('/api/insights/generate/', {'days': 5000}, format='json')
         job = InsightJob.objects.get(id=response.data['job_id'])
         self.assertEqual(job.days, 365)
 
-    @patch('ai_insights.jobs._spawn_thread')
-    def test_defaults_days_when_missing_or_invalid(self, mock_spawn):
+    @patch('ai_insights.jobs._enqueue')
+    def test_defaults_days_when_missing_or_invalid(self, mock_enqueue):
         response = self.client.post('/api/insights/generate/', {'days': 'lots'}, format='json')
         self.assertEqual(InsightJob.objects.get(id=response.data['job_id']).days, 30)
 
