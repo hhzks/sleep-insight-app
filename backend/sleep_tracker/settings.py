@@ -3,6 +3,7 @@ Django settings for sleep_tracker project.
 """
 
 import os
+import sys
 from pathlib import Path
 from dotenv import load_dotenv
 import dj_database_url
@@ -209,3 +210,23 @@ LOGGING = {
         },
     },
 }
+
+# Celery
+# Broker only - no result backend. Job state lives on the InsightJob row,
+# which the API already treats as the source of truth.
+CELERY_BROKER_URL = os.environ.get('CELERY_BROKER_URL', 'redis://localhost:6379/0')
+CELERY_RESULT_BACKEND = None
+
+# Celery's Redis transport polls with BRPOP roughly 1-4x per second even when
+# the queue is empty. At the default that is ~350k commands/day of pure idle
+# chatter, which exhausts serverless-Redis quotas on its own. Generations take
+# 2-3 minutes, so 5s of pickup latency is imperceptible. This is a cost
+# control - do not remove it as a "tuning nicety".
+CELERY_BROKER_TRANSPORT_OPTIONS = {'polling_interval': 5}
+
+CELERY_TASK_ACKS_LATE = False
+CELERY_WORKER_PREFETCH_MULTIPLIER = 1
+
+# Tests run tasks inline so the suite needs no broker.
+CELERY_TASK_ALWAYS_EAGER = 'test' in sys.argv
+CELERY_TASK_EAGER_PROPAGATES = True
