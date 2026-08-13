@@ -55,5 +55,21 @@ primary_region = "iad"
       Host = "health.check"
 
 [[vm]]
+  processes = ["web"]
+  size = "shared-cpu-1x"
+  memory = "512mb"
+
+# Sizing here is chosen, not measured: this machine runs Celery (prefork,
+# so --concurrency=1 means a main process plus one worker child), Django,
+# and firebase-admin together. 512mb is expected to fit but is untested
+# under real load - it's the first value to raise if the worker OOMs.
+#
+# This group is deliberately absent from http_service.checks - it serves no
+# HTTP, so there is nothing for that check to probe. That also means an OOM
+# here takes down generation and the embedded --beat reaper together with
+# no health check watching either: recovery depends on Fly restarting the
+# crashed machine, not on a check catching it first.
+[[vm]]
+  processes = ["worker"]
   size = "shared-cpu-1x"
   memory = "512mb"
