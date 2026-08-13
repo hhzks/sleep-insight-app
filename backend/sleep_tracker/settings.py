@@ -227,6 +227,13 @@ CELERY_BROKER_TRANSPORT_OPTIONS = {'polling_interval': 5}
 CELERY_TASK_ACKS_LATE = False
 CELERY_WORKER_PREFETCH_MULTIPLIER = 1
 
+
+def _celery_tasks_run_eagerly(argv):
+    # argv[1] is the management command itself, so a command that merely
+    # takes a 'test' argument cannot flip this on in a production process.
+    return len(argv) > 1 and argv[1] == 'test'
+
+
 # Tests run tasks inline so the suite needs no broker.
-CELERY_TASK_ALWAYS_EAGER = 'test' in sys.argv
+CELERY_TASK_ALWAYS_EAGER = _celery_tasks_run_eagerly(sys.argv)
 CELERY_TASK_EAGER_PROPAGATES = True

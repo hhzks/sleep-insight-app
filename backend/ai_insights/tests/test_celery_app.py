@@ -3,6 +3,7 @@ from django.conf import settings
 from django.test import TestCase
 
 from sleep_tracker.celery import app
+from sleep_tracker.settings import _celery_tasks_run_eagerly
 
 
 class CeleryAppTests(TestCase):
@@ -22,3 +23,25 @@ class CeleryAppTests(TestCase):
 
     def test_tasks_run_eagerly_under_test(self):
         self.assertTrue(settings.CELERY_TASK_ALWAYS_EAGER)
+
+
+class CeleryTasksRunEagerlyTests(TestCase):
+    """Coverage for the argv predicate, isolated from the real sys.argv.
+
+    A plain `'test' in argv` membership check would also enable eager mode
+    for a hypothetical production command invoked as e.g.
+    `manage.py notify_users test`, silently defeating the whole point of
+    running insight generation on a worker. These cases pin the fix's
+    positional check so a future regression back to membership fails loudly.
+    """
+
+    def test_eager_when_test_is_the_management_command(self):
+        self.assertTrue(_celery_tasks_run_eagerly(['manage.py', 'test']))
+
+    def test_not_eager_when_test_is_a_trailing_argument(self):
+        self.assertFalse(
+            _celery_tasks_run_eagerly(['manage.py', 'somecommand', 'test'])
+        )
+
+    def test_not_eager_with_no_command(self):
+        self.assertFalse(_celery_tasks_run_eagerly(['manage.py']))
