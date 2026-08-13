@@ -42,6 +42,13 @@ class FakeProvider:
         return self.result
 
 
+class ExplodingProvider:
+    """Fails the test if the model is ever actually called."""
+
+    def generate(self, system_prompt, user_prompt, schema):
+        raise AssertionError('provider should not be called for an inactive job')
+
+
 def night(user, days_ago):
     """Create one main-sleep record `days_ago` nights back."""
     end = timezone.now() - timedelta(days=days_ago)
@@ -138,6 +145,27 @@ class RunInsightJobTests(TestCase):
         with self.assertLogs('ai_insights.jobs', 'WARNING'):
             run_insight_job(uuid.uuid4())
         self.assertEqual(InsightJob.objects.count(), before)
+
+    def test_skips_a_job_that_was_reaped_while_queued(self):
+        """`--concurrency=1` means a job can legitimately still be queued
+        past the stale window; the reaper fails it based on created_at alone
+        because its budget only covers execution. If the worker later
+        dequeues that job anyway, it must not resurrect it - otherwise it
+        drives an already-failed row through running -> succeeded, duplicate
+        generation on top of whatever replacement the user already started.
+        This is exactly what acks_late=False / max_retries=0 exist to
+        prevent, and it is why run_insight_job guards on ACTIVE_STATUSES
+        before doing any work.
+        """
+        job = InsightJob.objects.create(
+            user=self.user, days=30, status=InsightJob.STATUS_FAILED,
+            error_code='internal', error_detail='reaped',
+        )
+        with self.assertLogs('ai_insights.jobs', 'WARNING'):
+            run_insight_job(job.id, provider=ExplodingProvider())
+        job.refresh_from_db()
+        self.assertEqual(job.status, InsightJob.STATUS_FAILED)
+        self.assertEqual(job.error_detail, 'reaped')
 
     def test_worker_thread_closes_its_connection(self):
         """A real worker thread's connection is never inside an atomic block,

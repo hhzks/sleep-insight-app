@@ -1,0 +1,10 @@
+# Scripts below run inside Linux containers (Fly's Dockerfile, Render's
+# build step). This repo is developed on Windows with core.autocrlf=true,
+# which normally checks these out as CRLF. A script starting
+# "#!/usr/bin/env sh\r" fails at exec with "no such file or directory" -
+# the Dockerfile already fixes the executable-bit half of this problem
+# (chmod +x, since the bit itself doesn't survive a Windows checkout); this
+# fixes the line-ending half. Force LF regardless of the checkout
+# platform's autocrlf setting.
+backend/bin/* text eol=lf
+backend/build.sh text eol=lf

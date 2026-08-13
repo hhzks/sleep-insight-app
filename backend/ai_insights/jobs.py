@@ -81,6 +81,22 @@ def run_insight_job(job_id, provider=None):
             logger.warning('insight job %s vanished before it ran', job_id)
             return
 
+        if job.status not in InsightJob.ACTIVE_STATUSES:
+            # The reaper fails queued jobs on created_at alone, because its
+            # time budget only covers execution, not queue wait. Under
+            # --concurrency=1, a job can legitimately still be queued past
+            # the stale window and get failed out from under it. Without
+            # this guard the worker would then pick it up anyway and drive
+            # an already-failed row through running -> succeeded - duplicate
+            # generation on top of whatever replacement the user already
+            # started. acks_late=False / max_retries=0 exist to prevent
+            # exactly this kind of double work.
+            logger.warning(
+                'insight job %s is %s, not active; skipping (likely reaped)',
+                job_id, job.status,
+            )
+            return
+
         job.status = InsightJob.STATUS_RUNNING
         job.started_at = timezone.now()
         job.save(update_fields=['status', 'started_at'])

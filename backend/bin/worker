@@ -9,7 +9,17 @@ set -e
 # --beat is embedded, which is ONLY safe while this process group has
 # exactly one machine. `fly scale count worker=2` would double every
 # scheduled reap. Promote beat to its own process group before scaling.
+#
+# --schedule is explicit and MUST stay that way. Beat's default
+# (`celerybeat-schedule`, relative to CWD `/app`) is unwritable: the
+# Dockerfile deliberately leaves /app root-owned and read-only to appuser
+# so collectstatic's output can't be tampered with at runtime. Because
+# embedded beat runs as a multiprocessing.Process child of the worker, a
+# failure to open its schedule file does NOT crash the worker - the worker
+# keeps consuming the queue while beat quietly dies on every boot, so
+# scheduled reaping silently never runs. Do not "tidy" this flag away.
 exec celery -A sleep_tracker worker \
   --concurrency=1 \
   --beat \
+  --schedule=/tmp/celerybeat-schedule \
   --loglevel=info
