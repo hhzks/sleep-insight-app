@@ -36,24 +36,24 @@ def check_ollama_base_url_has_a_scheme(app_configs, **kwargs):
 
 
 def check_stale_window_covers_worst_case(app_configs, **kwargs):
-    """INSIGHT_JOB_STALE_MINUTES must outlast the worst-case generation time,
+    """INSIGHT_JOB_STALE_MINUTES must outlast Celery's hard time limit,
 
-    or the stale-job reaper kills jobs that are still legitimately
-    generating. See settings.py and README.md for the same invariant.
+    or the stale-job reaper kills jobs the worker is still legitimately
+    running. The hard limit already sits above the worst-case generation
+    time, so checking against it covers both. See settings.py and README.md.
     """
     stale_seconds = settings.INSIGHT_JOB_STALE_MINUTES * 60
-    worst_case = settings.OLLAMA_TIMEOUT_SECONDS * (1 + settings.OLLAMA_INVALID_RETRIES)
+    hard_limit = settings.INSIGHT_TASK_TIME_LIMIT
 
-    if stale_seconds <= worst_case:
+    if stale_seconds <= hard_limit:
         return [
             Error(
                 f'INSIGHT_JOB_STALE_MINUTES ({settings.INSIGHT_JOB_STALE_MINUTES} min = '
-                f'{stale_seconds}s) does not exceed OLLAMA_TIMEOUT_SECONDS * '
-                f'(1 + OLLAMA_INVALID_RETRIES) ({settings.OLLAMA_TIMEOUT_SECONDS} * '
-                f'(1 + {settings.OLLAMA_INVALID_RETRIES}) = {worst_case}s). The stale-job '
-                'reaper will kill jobs that are still legitimately generating. Raise '
-                'INSIGHT_JOB_STALE_MINUTES to comfortably exceed the worst-case '
-                'generation time.',
+                f'{stale_seconds}s) does not exceed INSIGHT_TASK_TIME_LIMIT '
+                f'({hard_limit}s), Celery\'s hard kill for a generation task. The '
+                'stale-job reaper will fail jobs the worker is still running. Raise '
+                'INSIGHT_JOB_STALE_MINUTES, or lower OLLAMA_TIMEOUT_SECONDS (the task '
+                'limits derive from it).',
                 id='ai_insights.E001',
             )
         ]

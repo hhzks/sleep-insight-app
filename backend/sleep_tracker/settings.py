@@ -172,8 +172,20 @@ OLLAMA_NUM_PREDICT = int(os.environ.get('OLLAMA_NUM_PREDICT', '1000'))
 OLLAMA_TEMPERATURE = float(os.environ.get('OLLAMA_TEMPERATURE', '0.7'))
 OLLAMA_INVALID_RETRIES = int(os.environ.get('OLLAMA_INVALID_RETRIES', '1'))
 
-# Must exceed OLLAMA_TIMEOUT_SECONDS * (1 + OLLAMA_INVALID_RETRIES), or the
-# reaper will kill jobs that are still legitimately generating.
+# Worst-case time one generation may legitimately take.
+INSIGHT_WORST_CASE_SECONDS = OLLAMA_TIMEOUT_SECONDS * (1 + OLLAMA_INVALID_RETRIES)
+
+# Celery's two kill switches, derived so that raising OLLAMA_TIMEOUT_SECONDS
+# cannot silently invert the chain. Literals here would mean a raised Ollama
+# timeout gets truncated by Celery instead - visible only as generations that
+# mysteriously stop at the old bound.
+#   soft: raises SoftTimeLimitExceeded, caught by run_insight_job's except
+#   hard: SIGKILLs the worker child, leaving the row for the reaper
+INSIGHT_TASK_SOFT_TIME_LIMIT = INSIGHT_WORST_CASE_SECONDS + 60
+INSIGHT_TASK_TIME_LIMIT = INSIGHT_TASK_SOFT_TIME_LIMIT + 60
+
+# Must exceed INSIGHT_TASK_TIME_LIMIT, or the reaper kills jobs Celery is
+# still running. Enforced by the ai_insights.E001 system check.
 INSIGHT_JOB_STALE_MINUTES = int(os.environ.get('INSIGHT_JOB_STALE_MINUTES', '15'))
 
 # Logging
