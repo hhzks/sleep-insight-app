@@ -39,6 +39,10 @@ COPY . .
 RUN DJANGO_SECRET_KEY=build-only-not-used \
     python manage.py collectstatic --no-input
 
+# The executable bit does not survive a clone on Windows, so set it in the
+# image regardless of what the host filesystem reports.
+RUN chmod +x bin/web bin/worker
+
 # Drop privileges. Done after collectstatic so /app can stay root-owned and
 # read-only to the app user.
 RUN useradd --system --create-home --uid 1001 appuser
@@ -46,21 +50,6 @@ USER appuser
 
 EXPOSE 8000
 
-# Worker sizing note: ai_insights/jobs.py runs generation in a daemon thread
-# inside the web process for up to OLLAMA_TIMEOUT_SECONDS * (1 + retries).
-# gthread keeps those threads cheap while the process stays responsive.
-# At 512MB, 2 workers is the ceiling - if you see OOM kills, either drop to
-# --workers 1 or raise the machine to 1GB in fly.toml.
-#
-# --graceful-timeout is deliberately short: a daemon thread cannot survive
-# interpreter exit regardless, and reap_stale_jobs() converts the orphaned
-# InsightJob row into a clean failure. Waiting longer just slows deploys.
-CMD ["gunicorn", "sleep_tracker.wsgi:application", \
-     "--bind", "0.0.0.0:8000", \
-     "--worker-class", "gthread", \
-     "--workers", "2", \
-     "--threads", "4", \
-     "--timeout", "120", \
-     "--graceful-timeout", "30", \
-     "--access-logfile", "-", \
-     "--error-logfile", "-"]
+# Both process commands live in bin/. fly.toml's [processes] references the
+# same scripts, so there is one definition of how each process starts.
+CMD ["/app/bin/web"]

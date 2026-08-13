@@ -29,6 +29,7 @@ A sleep tracking application with AI-powered insights, Fitbit integration, and F
 - **Django 4.2** with **Django REST Framework**: RESTful API
 - **Firebase Admin SDK**: Server-side token verification (custom DRF authentication class)
 - **Self-hosted Ollama (`qwen2.5:7b-instruct`)**: AI insights generated on your own inference server (falls back to rule-based analysis when the server is unreachable)
+- **Celery + Redis**: Insight generation runs as a task on a separate worker process; a beat schedule embedded in that same worker reaps stale jobs every 5 minutes
 - **SQLite** (local default) / **PostgreSQL** (via `DATABASE_URL` or `DB_*` vars)
 - **WhiteNoise + Gunicorn**: Static files and production serving
 
@@ -49,7 +50,9 @@ sleepinsight/
 │   ├── users/                # Custom user model, Firebase auth, profiles
 │   ├── sleep/                # Sleep records & goals
 │   ├── fitbit_integration/   # Fitbit OAuth, sync & sync logs
-│   ├── ai_insights/          # AI-powered analysis (self-hosted Ollama)
+│   ├── ai_insights/          # AI-powered analysis (self-hosted Ollama, Celery tasks)
+│   ├── bin/                  # web/worker entrypoints - shared by the
+│   │                         # Dockerfile CMD and fly.toml [processes]
 │   ├── build.sh              # Render build script
 │   ├── Procfile              # Gunicorn start command
 │   └── requirements.txt
@@ -73,7 +76,7 @@ sleepinsight/
 
 Authentication is fully delegated to Firebase: the React app signs the user in with the Firebase Web SDK and attaches the resulting ID token to every API request. On the backend, a custom DRF authentication class verifies the token with the Firebase Admin SDK and automatically provisions a local Django user on first sight; there is no separate registration endpoint or session/JWT handling to configure.
 
-Sleep data comes from two sources that share the same models: manual entries created in the UI, and records imported through the Fitbit OAuth integration. The insights module summarizes recent records (duration, efficiency, sleep stages, consistency, sleep debt) and sends that summary to a self-hosted Ollama server. Because CPU inference takes minutes, generation runs in a background thread and the UI polls for the result; if the model is unreachable, slow, or returns malformed output, the app falls back to built-in rule-based analysis and tells the user it did so.
+Sleep data comes from two sources that share the same models: manual entries created in the UI, and records imported through the Fitbit OAuth integration. The insights module summarizes recent records (duration, efficiency, sleep stages, consistency, sleep debt) and sends that summary to a self-hosted Ollama server. Because CPU inference takes minutes, generation runs as a Celery task on a separate worker process and the UI polls for the result; if the model is unreachable, slow, or returns malformed output, the app falls back to built-in rule-based analysis and tells the user it did so.
 
 ## Getting Started
 
@@ -84,6 +87,7 @@ Sleep data comes from two sources that share the same models: manual entries cre
 - Firebase project (required, handles all authentication)
 - Fitbit Developer account (optional, only for device sync)
 - Self-hosted Ollama server (optional, AI insights fall back to rule-based analysis if unavailable)
+- Redis (required to run the Celery worker; without it, AI insight requests stay `queued` forever - even the rule-based fallback path runs as a Celery task)
 
 ### Setting Up the Inference Server (optional)
 
@@ -215,6 +219,18 @@ python manage.py createsuperuser
 python manage.py runserver
 ```
 
+AI insight generation additionally needs a Redis broker and a Celery worker
+consuming from it - `manage.py runserver` alone only queues the job. Start
+Redis (`docker run --rm -p 6379:6379 redis:7-alpine` works), then in a
+second terminal with the virtualenv active:
+
+```bash
+celery -A sleep_tracker worker --loglevel=info
+```
+
+This is optional if you don't need AI insights; the rest of the app runs
+without it.
+
 #### 5. Frontend Setup
 
 ```bash
@@ -268,8 +284,16 @@ See `backend/.env.example` for the full template.
 | `OLLAMA_TEMPERATURE` | Sampling temperature for generation (defaults to 0.7) |
 | `OLLAMA_INVALID_RETRIES` | Retries after malformed model output before falling back to rules (defaults to 1) |
 | `INSIGHT_JOB_STALE_MINUTES` | Max job age before reaper kills it (defaults to 15) |
+| `CELERY_BROKER_URL` | Redis URL for the Celery broker (defaults to `redis://localhost:6379/0`) |
 
-`INSIGHT_JOB_STALE_MINUTES * 60` must exceed `OLLAMA_TIMEOUT_SECONDS * (1 + OLLAMA_INVALID_RETRIES)`, or the reaper can kill jobs that are still generating.
+Generation runs as a Celery task with a soft and a hard time limit derived from `OLLAMA_TIMEOUT_SECONDS`, and the stale-job reaper (`INSIGHT_JOB_STALE_MINUTES`) must not fire before Celery's own hard kill does. The enforced ordering, checked at startup by `ai_insights.E001`, is:
+
+```
+worst case  <  soft limit  <  hard limit  <  stale window
+OLLAMA_TIMEOUT_SECONDS * (1 + OLLAMA_INVALID_RETRIES)  <  worst case + 60  <  soft limit + 60  <  INSIGHT_JOB_STALE_MINUTES * 60
+```
+
+With the defaults (`OLLAMA_TIMEOUT_SECONDS=300`, `OLLAMA_INVALID_RETRIES=1`, `INSIGHT_JOB_STALE_MINUTES=15`) that's `600 < 660 < 720 < 900`. If you raise `OLLAMA_TIMEOUT_SECONDS`, raise `INSIGHT_JOB_STALE_MINUTES` to match or the reaper will kill jobs Celery is still legitimately running.
 
 ### Frontend Environment Variables
 
@@ -371,6 +395,8 @@ The repository ships with configuration for Render (backend + database) and Verc
 - A free **PostgreSQL database** wired in via `DATABASE_URL`
 
 Create a Blueprint on [Render](https://render.com) pointed at this repository, then fill in the environment variables marked `sync: false` (Firebase, Fitbit, CORS origins, AI keys) in the dashboard.
+
+`render.yaml` defines no worker service, so AI insight generation (a Celery task - see Tech Stack) has no process to run it on Render; jobs will queue and never complete. The rest of the app is unaffected. `backend/fly.toml` is the deployment target that runs the worker, via the `web`/`worker` process groups in `[processes]`.
 
 ### Frontend — Vercel
 

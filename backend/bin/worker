@@ -1,0 +1,15 @@
+#!/usr/bin/env sh
+set -e
+
+# --concurrency=1 is deliberate. The task is IO-bound here (it waits on an
+# HTTP call), so concurrency could be higher - but the Ollama host has 2
+# OCPUs and serves one generation at a time. Concurrency 1 backpressures
+# against the real bottleneck instead of queueing requests it cannot serve.
+#
+# --beat is embedded, which is ONLY safe while this process group has
+# exactly one machine. `fly scale count worker=2` would double every
+# scheduled reap. Promote beat to its own process group before scaling.
+exec celery -A sleep_tracker worker \
+  --concurrency=1 \
+  --beat \
+  --loglevel=info

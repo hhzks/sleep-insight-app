@@ -24,16 +24,23 @@ primary_region = "iad"
   # the machine never becomes healthy. Add your custom domain here too.
   ALLOWED_HOSTS = ".fly.dev,health.check"
 
+# Both entries reference bin/ scripts rather than restating the command,
+# so the Dockerfile CMD and this file cannot drift.
+[processes]
+  web = "/app/bin/web"
+  worker = "/app/bin/worker"
+
 [http_service]
+  processes = ["web"]
   internal_port = 8000
   force_https = true
 
-  # NOT negotiable for this app. ai_insights/jobs.py:63 spawns a daemon thread
-  # that outlives the HTTP response by up to ~10 minutes with default settings
-  # (OLLAMA_TIMEOUT_SECONDS=300 x (1 + OLLAMA_INVALID_RETRIES=1)). Any
-  # scale-to-zero setting kills insight generation mid-flight, because Fly
-  # measures idleness in requests and sees none while the thread works.
-  # Revisit only after moving generation to a real queue worker.
+  # Insight generation now runs on the worker process group, not here, so
+  # the web tier no longer runs anything that outlives the HTTP response -
+  # scale-to-zero would no longer cut off in-flight work. Left "off" anyway:
+  # this app deliberately isn't optimising for cost, and min_machines_running
+  # below keeps the health check warm rather than eating cold-start latency
+  # on every visit after idle.
   auto_stop_machines = "off"
   auto_start_machines = false
   min_machines_running = 1
