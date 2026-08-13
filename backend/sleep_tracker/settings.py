@@ -227,6 +227,15 @@ CELERY_BROKER_TRANSPORT_OPTIONS = {'polling_interval': 5}
 CELERY_TASK_ACKS_LATE = False
 CELERY_WORKER_PREFETCH_MULTIPLIER = 1
 
+# Reaping used to happen as a side effect of a client polling a job. That
+# coupled cleanup to traffic: with nobody polling, stale rows sat forever.
+CELERY_BEAT_SCHEDULE = {
+    'reap-stale-insight-jobs': {
+        'task': 'ai_insights.reap_stale_jobs',
+        'schedule': 300,  # every 5 minutes
+    },
+}
+
 
 def _celery_tasks_run_eagerly(argv):
     # argv[1] is the management command itself, so a command that merely

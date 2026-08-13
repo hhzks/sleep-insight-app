@@ -111,7 +111,7 @@ def run_insight_job(job_id, provider=None):
         # never inside an atomic block, so this always fires in production.
         # It only skips when this function is invoked synchronously from
         # inside a wrapping transaction (as tests do, calling it directly
-        # rather than through _spawn_thread) — there, Django's close()
+        # rather than through the Celery task) — there, Django's close()
         # doesn't actually free anything anyway (it just marks the
         # connection dirty for the enclosing atomic() to roll back), so
         # calling it would only corrupt the caller's transaction/connection

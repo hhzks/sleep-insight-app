@@ -6,7 +6,7 @@ from datetime import timedelta
 from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
-from django.test import TestCase, override_settings
+from django.test import TestCase
 from django.utils import timezone
 from rest_framework.test import APIClient
 
@@ -123,24 +123,23 @@ class JobPollingTests(TestCase):
         self.assertEqual(APIClient().get(f'/api/insights/jobs/{job.id}/').status_code, 401)
 
 
-@override_settings(INSIGHT_JOB_STALE_MINUTES=15)
-class StaleJobReapingOnPollTests(TestCase):
-    """A job killed by a restart resolves to failed on the next poll."""
+class StaleJobReapingTests(TestCase):
+    """Reaping is scheduled, not triggered by reads. Polling a stale job now
+    reports it unchanged until beat runs; the reaper itself is covered by
+    ReapStaleJobsTests in test_jobs.py."""
 
     def setUp(self):
         self.user = User.objects.create(email='sleeper@example.com', firebase_uid='uid-1')
         self.client = APIClient()
         self.client.force_authenticate(user=self.user)
 
-    def test_poll_reaps_a_stale_job(self):
-        job = InsightJob.objects.create(
-            user=self.user, days=30, status=InsightJob.STATUS_RUNNING,
-            started_at=timezone.now() - timedelta(minutes=30),
+    def test_polling_does_not_reap(self):
+        job = InsightJob.objects.create(user=self.user, days=30, status=InsightJob.STATUS_RUNNING)
+        InsightJob.objects.filter(pk=job.pk).update(
+            started_at=timezone.now() - timedelta(minutes=60),
         )
-        with self.assertLogs('ai_insights.jobs', 'ERROR'):
-            response = self.client.get(f'/api/insights/jobs/{job.id}/')
-        self.assertEqual(response.data['status'], 'failed')
-        self.assertEqual(response.data['error'], InsightJob.FAILED_MESSAGE)
+        response = self.client.get(f'/api/insights/jobs/{job.id}/')
+        self.assertEqual(response.data['status'], InsightJob.STATUS_RUNNING)
 
 
 class ActiveJobTests(TestCase):
