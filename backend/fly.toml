@@ -1,0 +1,52 @@
+# Fly.io app config. Deploy from this directory: `fly deploy` (or via CI).
+#
+# Rename `app` to whatever `fly launch --no-deploy` reserved for you, and set
+# primary_region to the code nearest you (`fly platform regions` lists them).
+app = "sleepinsight-api"
+primary_region = "iad"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[deploy]
+  # Migrations run in a one-off machine that must exit 0 before any new
+  # machine takes traffic. Deliberately NOT in the image build (where
+  # backend/build.sh puts them for Render): a build step races concurrent
+  # deploys and can apply schema changes while the *old* code is still
+  # serving. build.sh is unused on this path - see .dockerignore.
+  release_command = "python manage.py migrate --noinput"
+
+[env]
+  DEBUG = "false"
+  # `.fly.dev` covers the public hostname. `health.check` is the Host header
+  # the checks below send - Fly probes the machine over its private network,
+  # so without this Django rejects every probe with DisallowedHost (400) and
+  # the machine never becomes healthy. Add your custom domain here too.
+  ALLOWED_HOSTS = ".fly.dev,health.check"
+
+[http_service]
+  internal_port = 8000
+  force_https = true
+
+  # NOT negotiable for this app. ai_insights/jobs.py:63 spawns a daemon thread
+  # that outlives the HTTP response by up to ~10 minutes with default settings
+  # (OLLAMA_TIMEOUT_SECONDS=300 x (1 + OLLAMA_INVALID_RETRIES=1)). Any
+  # scale-to-zero setting kills insight generation mid-flight, because Fly
+  # measures idleness in requests and sees none while the thread works.
+  # Revisit only after moving generation to a real queue worker.
+  auto_stop_machines = "off"
+  auto_start_machines = false
+  min_machines_running = 1
+
+  [[http_service.checks]]
+    grace_period = "15s"
+    interval = "30s"
+    method = "GET"
+    path = "/api/health/"
+    timeout = "5s"
+    [http_service.checks.headers]
+      Host = "health.check"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"
