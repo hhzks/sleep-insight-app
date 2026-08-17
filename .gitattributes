@@ -8,3 +8,9 @@
 # platform's autocrlf setting.
 backend/bin/* text eol=lf
 backend/build.sh text eol=lf
+
+# Not a script, but the same class of problem: Cloudflare parses _redirects
+# line by line. CI builds on Linux and is unaffected, so this only bites a
+# manual `wrangler pages deploy dist` run from a Windows checkout - a failure
+# that would show up as SPA routing silently not working, with no build error.
+frontend/public/_redirects text eol=lf

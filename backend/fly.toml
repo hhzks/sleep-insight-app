@@ -1,9 +1,13 @@
 # Fly.io app config. Deploy from this directory: `fly deploy` (or via CI).
 #
-# Rename `app` to whatever `fly launch --no-deploy` reserved for you, and set
-# primary_region to the code nearest you (`fly platform regions` lists them).
+# The app was created with `fly apps create sleepinsight-api --org personal`.
+# primary_region is London to sit next to the Postgres and Redis instances -
+# the web tier queries the database on every request, so a cross-Atlantic hop
+# there would be paid on every page load. The worker's distance from Ollama is
+# not worth optimising by comparison: a generation takes minutes, which dwarfs
+# any round-trip difference. `fly platform regions` lists the codes.
 app = "sleepinsight-api"
-primary_region = "iad"
+primary_region = "lhr"
 
 [build]
   dockerfile = "Dockerfile"

@@ -53,11 +53,15 @@ sleepinsight/
 │   ├── ai_insights/          # AI-powered analysis (self-hosted Ollama, Celery tasks)
 │   ├── bin/                  # web/worker entrypoints - shared by the
 │   │                         # Dockerfile CMD and fly.toml [processes]
-│   ├── build.sh              # Render build script
-│   ├── Procfile              # Gunicorn start command
+│   ├── Dockerfile            # Multi-stage build, runs as a non-root user
+│   ├── fly.toml              # Fly app: web + worker process groups
+│   ├── build.sh              # Render build script (legacy)
+│   ├── Procfile              # Gunicorn start command (legacy)
 │   └── requirements.txt
 │
 ├── frontend/                 # React frontend
+│   ├── public/
+│   │   └── _redirects        # Cloudflare Pages SPA rewrite
 │   ├── src/
 │   │   ├── components/       # Layout, ProtectedRoute, charts
 │   │   ├── pages/            # Dashboard, SleepLog, Trends, Insights,
@@ -65,10 +69,11 @@ sleepinsight/
 │   │   ├── services/         # API client (axios) & Firebase
 │   │   ├── stores/           # Zustand stores (auth, sleep)
 │   │   └── config.ts         # Firebase & API configuration
-│   ├── vercel.json           # Vercel deployment config
+│   ├── vercel.json           # Vercel deployment config (legacy)
 │   └── package.json
 │
-├── render.yaml               # Render blueprint (API + PostgreSQL)
+├── .github/workflows/ci.yml  # Tests on every PR, deploys on main
+├── render.yaml               # Render blueprint (legacy)
 └── README.md
 ```
 
@@ -386,23 +391,63 @@ python manage.py migrate
 
 ## Deployment
 
-The repository ships with configuration for Render (backend + database) and Vercel (frontend).
+Production runs on **Fly.io** (backend) and **Cloudflare Pages** (frontend), deployed by GitHub Actions on every push to `main`. Render and Vercel configuration is still in the repository but is no longer the target — see [Legacy hosts](#legacy-hosts).
 
-### Backend — Render
+### Backend — Fly.io
 
-`render.yaml` defines a blueprint with:
-- A **web service** (`sleep-tracker-api`) that runs `backend/build.sh` (installs dependencies, collects static files, runs migrations) and serves with Gunicorn
-- A free **PostgreSQL database** wired in via `DATABASE_URL`
+`backend/fly.toml` defines a single app with two process groups, both running the same image built from `backend/Dockerfile`:
 
-Create a Blueprint on [Render](https://render.com) pointed at this repository, then fill in the environment variables marked `sync: false` (Firebase, Fitbit, CORS origins, AI keys) in the dashboard.
+| Group | Entrypoint | Role |
+| --- | --- | --- |
+| `web` | `backend/bin/web` | Gunicorn, behind Fly's load balancer |
+| `worker` | `backend/bin/worker` | Celery worker with embedded beat |
 
-`render.yaml` defines no worker service, so AI insight generation (a Celery task - see Tech Stack) has no process to run it on Render; jobs will queue and never complete. The rest of the app is unaffected. `backend/fly.toml` is the deployment target that runs the worker, via the `web`/`worker` process groups in `[processes]`.
+Both groups reference the `bin/` scripts rather than restating the command, so the Dockerfile `CMD` and `fly.toml` cannot drift apart.
 
-### Frontend — Vercel
+Migrations run through `release_command`, in a one-off machine that must exit 0 before any new machine takes traffic — deliberately not during the image build, where a build step would race concurrent deploys and could apply schema changes while the old code is still serving.
 
-`frontend/vercel.json` configures the Vite build with SPA rewrites. Import the repository into [Vercel](https://vercel.com) with `frontend` as the root directory and set the `VITE_*` environment variables (point `VITE_API_BASE_URL` at your deployed backend, e.g. `https://<your-service>.onrender.com/api`).
+Only the `web` group is attached to `http_service`. The health check at `/api/health/` sends a `Host: health.check` header, because Fly probes machines over its private network and Django would otherwise reject every probe with `DisallowedHost`; that hostname is in `ALLOWED_HOSTS` in `[env]` for exactly this reason.
 
-Or build manually:
+Two managed services are required:
+
+- **PostgreSQL** — any provider, wired in via `DATABASE_URL`
+- **Redis** — the Celery broker, via `CELERY_BROKER_URL`. Use a `rediss://` URL
+
+Set the rest as Fly secrets (`fly secrets set`): `DJANGO_SECRET_KEY`, `FIREBASE_PROJECT_ID`, `FIREBASE_CLIENT_EMAIL`, `FIREBASE_PRIVATE_KEY`, `FITBIT_CLIENT_ID`, `FITBIT_CLIENT_SECRET`, `FITBIT_REDIRECT_URI`, `CORS_ALLOWED_ORIGINS`, `OLLAMA_BASE_URL`, `OLLAMA_API_KEY`.
+
+> `FIREBASE_PRIVATE_KEY` must keep its literal `\n` sequences rather than real newlines; `users/firebase_auth.py` expands them on load.
+
+Scaling the `worker` group past one machine will duplicate every scheduled reap, because beat is embedded in the worker. Promote beat to its own process group first.
+
+### Frontend — Cloudflare Pages
+
+The build output is `frontend/dist`, published with `wrangler pages deploy`.
+
+`frontend/public/_redirects` rewrites unmatched paths to `/index.html` with status 200, which is what lets React Router handle a hard load of a deep link such as `/insights`. Without it Cloudflare returns 404 for every route except `/`.
+
+`VITE_*` values are inlined by Vite at **build** time, so they must be present in the build step rather than on the host. They are stored as repository *variables*, not secrets: the Firebase web config ships to every browser inside the bundle, so treating it as secret buys nothing. Access is controlled by Firebase Auth rules and authorised domains.
+
+### Continuous deployment
+
+`.github/workflows/ci.yml` runs backend tests (against a real PostgreSQL 16 service container) and frontend lint/test/build on every pull request. Pushes to `main` additionally run two deploy jobs, each gated on its own test job.
+
+| Name | Kind | Purpose |
+| --- | --- | --- |
+| `FLY_API_TOKEN` | secret | `fly tokens create deploy` |
+| `CLOUDFLARE_API_TOKEN` | secret | Pages token, created in the Cloudflare dashboard |
+| `CLOUDFLARE_ACCOUNT_ID` | secret | From `wrangler whoami` |
+| `VITE_FIREBASE_*` (6) | variable | Firebase web config |
+| `VITE_API_BASE_URL` | variable | e.g. `https://<app>.fly.dev/api` |
+
+After the first deploy, three settings must be updated by hand to point at the new hostnames: `CORS_ALLOWED_ORIGINS` on Fly, the authorised domains list in the Firebase console, and the redirect URL in the Fitbit developer portal.
+
+### Legacy hosts
+
+`render.yaml` and `frontend/vercel.json` predate the move and are kept only so the project can still be stood up on those platforms.
+
+`render.yaml` defines no worker service, so AI insight generation — a Celery task — has no process to run it there; jobs queue and never complete. The rest of the app is unaffected.
+
+To build the frontend for any other host:
 
 ```bash
 cd frontend

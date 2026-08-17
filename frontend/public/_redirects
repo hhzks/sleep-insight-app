@@ -1,0 +1,14 @@
+# Cloudflare Pages SPA routing.
+#
+# React Router owns every path below /, but Cloudflare serves static files: a
+# hard load or refresh of /insights asks for a file that was never built and
+# gets a 404. This rewrites unmatched paths to the app shell so the router can
+# resolve them client-side.
+#
+# Status 200 makes it a rewrite, not a redirect - the browser keeps the
+# original URL. This is the Cloudflare equivalent of the `rewrites` block in
+# frontend/vercel.json; both files are kept so either host can serve the app.
+#
+# Vite copies public/ to the root of dist/, which is what `wrangler pages
+# deploy dist` uploads, so this needs no build-config change.
+/*    /index.html   200
