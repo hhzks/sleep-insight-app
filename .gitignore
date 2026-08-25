@@ -54,3 +54,6 @@ firebase-credentials.json
 # Secrets
 *.pem
 *.key
+
+
+docs/*
