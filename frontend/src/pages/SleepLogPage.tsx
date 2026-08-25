@@ -51,7 +51,7 @@ export default function SleepLogPage() {
   const onSubmit = async (data: SleepFormData) => {
     try {
       const startDateTime = new Date(`${data.date_of_sleep}T${data.start_time}`)
-      let endDateTime = new Date(`${data.date_of_sleep}T${data.end_time}`)
+      const endDateTime = new Date(`${data.date_of_sleep}T${data.end_time}`)
       
       // If end time is before start time, assume it's the next day
       if (endDateTime <= startDateTime) {

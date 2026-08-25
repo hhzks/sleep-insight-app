@@ -1,0 +1,38 @@
+# Secrets must never reach the image. settings.py calls load_dotenv(), so a
+# stray .env here would silently override the platform's injected config.
+.env
+.env.*
+*.pem
+*.key
+firebase-credentials.json
+*-firebase-adminsdk-*.json
+
+# Local virtualenv - the image builds its own.
+venv/
+.venv/
+env/
+ENV/
+
+# collectstatic runs during the build; a stale local copy would shadow it
+# and break the CompressedManifestStaticFilesStorage hash manifest.
+staticfiles/
+
+# Local database
+db.sqlite3
+
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+
+.git/
+.gitignore
+*.log
+.pytest_cache/
+.vscode/
+.idea/
+
+# Render-specific; the image supersedes both.
+build.sh
+Procfile

@@ -6,13 +6,13 @@ from datetime import timedelta
 from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
-from django.test import TestCase, TransactionTestCase, override_settings
+from django.test import TestCase, override_settings
 from django.utils import timezone
 
-from ai_insights.jobs import _spawn_thread, reap_stale_jobs, run_insight_job, start_insight_job
+from ai_insights.jobs import reap_stale_jobs, run_insight_job, start_insight_job
 from ai_insights.models import InsightJob
 from ai_insights.providers.ollama import OllamaUnavailable
-from ai_insights.services import SOURCE_LOCAL_MODEL, SOURCE_RULE_BASED, InsightsResult
+from ai_insights.services import SOURCE_LOCAL_MODEL, SOURCE_RULE_BASED
 from sleep.models import SleepRecord
 
 User = get_user_model()
@@ -42,6 +42,13 @@ class FakeProvider:
         return self.result
 
 
+class ExplodingProvider:
+    """Fails the test if the model is ever actually called."""
+
+    def generate(self, system_prompt, user_prompt, schema):
+        raise AssertionError('provider should not be called for an inactive job')
+
+
 def night(user, days_ago):
     """Create one main-sleep record `days_ago` nights back."""
     end = timezone.now() - timedelta(days=days_ago)
@@ -59,33 +66,33 @@ class StartInsightJobTests(TestCase):
     def setUp(self):
         self.user = User.objects.create(email='sleeper@example.com', firebase_uid='uid-1')
 
-    @patch('ai_insights.jobs._spawn_thread')
-    def test_creates_a_queued_job_and_spawns_a_thread(self, mock_spawn):
+    @patch('ai_insights.jobs._enqueue')
+    def test_creates_a_queued_job_and_enqueues_it(self, mock_enqueue):
         job, already_running = start_insight_job(self.user, days=30)
         self.assertFalse(already_running)
         self.assertEqual(job.status, InsightJob.STATUS_QUEUED)
         self.assertEqual(job.days, 30)
-        mock_spawn.assert_called_once_with(job.id)
+        mock_enqueue.assert_called_once_with(job.id)
 
-    @patch('ai_insights.jobs._spawn_thread')
-    def test_second_call_returns_the_existing_job(self, mock_spawn):
+    @patch('ai_insights.jobs._enqueue')
+    def test_second_call_returns_the_existing_job(self, mock_enqueue):
         first, _ = start_insight_job(self.user, days=30)
         second, already_running = start_insight_job(self.user, days=7)
         self.assertTrue(already_running)
         self.assertEqual(first.id, second.id)
         self.assertEqual(InsightJob.objects.count(), 1)
-        self.assertEqual(mock_spawn.call_count, 1)
+        self.assertEqual(mock_enqueue.call_count, 1)
 
-    @patch('ai_insights.jobs._spawn_thread')
-    def test_other_users_jobs_do_not_block(self, mock_spawn):
+    @patch('ai_insights.jobs._enqueue')
+    def test_other_users_jobs_do_not_block(self, mock_enqueue):
         other = User.objects.create(email='other@example.com', firebase_uid='uid-2')
         start_insight_job(other, days=30)
         _, already_running = start_insight_job(self.user, days=30)
         self.assertFalse(already_running)
         self.assertEqual(InsightJob.objects.count(), 2)
 
-    @patch('ai_insights.jobs._spawn_thread')
-    def test_finished_job_does_not_block_a_new_one(self, mock_spawn):
+    @patch('ai_insights.jobs._enqueue')
+    def test_finished_job_does_not_block_a_new_one(self, mock_enqueue):
         first, _ = start_insight_job(self.user, days=30)
         first.status = InsightJob.STATUS_SUCCEEDED
         first.save()
@@ -138,6 +145,27 @@ class RunInsightJobTests(TestCase):
         with self.assertLogs('ai_insights.jobs', 'WARNING'):
             run_insight_job(uuid.uuid4())
         self.assertEqual(InsightJob.objects.count(), before)
+
+    def test_skips_a_job_that_was_reaped_while_queued(self):
+        """`--concurrency=1` means a job can legitimately still be queued
+        past the stale window; the reaper fails it based on created_at alone
+        because its budget only covers execution. If the worker later
+        dequeues that job anyway, it must not resurrect it - otherwise it
+        drives an already-failed row through running -> succeeded, duplicate
+        generation on top of whatever replacement the user already started.
+        This is exactly what acks_late=False / max_retries=0 exist to
+        prevent, and it is why run_insight_job guards on ACTIVE_STATUSES
+        before doing any work.
+        """
+        job = InsightJob.objects.create(
+            user=self.user, days=30, status=InsightJob.STATUS_FAILED,
+            error_code='internal', error_detail='reaped',
+        )
+        with self.assertLogs('ai_insights.jobs', 'WARNING'):
+            run_insight_job(job.id, provider=ExplodingProvider())
+        job.refresh_from_db()
+        self.assertEqual(job.status, InsightJob.STATUS_FAILED)
+        self.assertEqual(job.error_detail, 'reaped')
 
     def test_worker_thread_closes_its_connection(self):
         """A real worker thread's connection is never inside an atomic block,
@@ -216,37 +244,32 @@ class ReapStaleJobsTests(TestCase):
         self.assertEqual(reap_stale_jobs(), 0)
 
 
-class SpawnThreadTests(TransactionTestCase):
-    """_spawn_thread must actually run the job on a genuinely separate thread.
+class EnqueueTests(TestCase):
+    """Dispatch must not happen until the row is committed.
 
-    Every other test in this file either patches _spawn_thread out entirely
-    (StartInsightJobTests) or calls run_insight_job directly on the test
-    thread (RunInsightJobTests). Neither exercises threading.Thread(...)
-    construction itself — e.g. a malformed `args=` tuple would raise inside
-    the spawned thread, be silently swallowed by threading's default
-    excepthook, and never fail any of those tests.
-
-    TransactionTestCase (not TestCase) is required: TestCase wraps the test
-    body in an outer transaction that never really commits to the database,
-    so a second connection opened by a genuinely separate thread would not
-    see the row start_insight_job's transaction created.
+    A Celery worker is a different process on a different machine and will
+    happily dequeue before the producer's transaction commits, which is
+    exactly the 'vanished before it ran' case run_insight_job guards against.
     """
 
     def setUp(self):
         self.user = User.objects.create(email='sleeper@example.com', firebase_uid='uid-1')
 
-    @patch('ai_insights.jobs.generate_insights')
-    def test_spawned_thread_runs_the_job_to_a_terminal_status(self, mock_generate):
-        # Stubbed so this never reaches the network — generate_insights is
-        # what would otherwise construct a real OllamaClient and try to
-        # contact a real Ollama server.
-        mock_generate.return_value = InsightsResult(payload=MODEL_PAYLOAD, source=SOURCE_LOCAL_MODEL)
+    @patch('ai_insights.tasks.generate_insight_task')
+    def test_dispatch_is_deferred_until_commit(self, mock_task):
+        with self.captureOnCommitCallbacks(execute=False) as callbacks:
+            job, _ = start_insight_job(self.user, days=30)
+            mock_task.delay.assert_not_called()
 
-        job = InsightJob.objects.create(user=self.user, days=30)
-        thread = _spawn_thread(job.id)
-        thread.join(timeout=5)
+        self.assertEqual(len(callbacks), 1)
+        callbacks[0]()
+        mock_task.delay.assert_called_once_with(str(job.id))
 
-        self.assertFalse(thread.is_alive())
-        job.refresh_from_db()
-        self.assertEqual(job.status, InsightJob.STATUS_SUCCEEDED)
-        self.assertEqual(job.source, SOURCE_LOCAL_MODEL)
+    @patch('ai_insights.tasks.generate_insight_task')
+    def test_dispatch_passes_the_job_id_as_a_string(self, mock_task):
+        # UUID objects are not JSON-serialisable by Celery's default encoder.
+        with self.captureOnCommitCallbacks(execute=True):
+            job, _ = start_insight_job(self.user, days=30)
+        (dispatched_id,), _ = mock_task.delay.call_args
+        self.assertIsInstance(dispatched_id, str)
+        self.assertEqual(dispatched_id, str(job.id))

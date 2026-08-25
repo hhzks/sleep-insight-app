@@ -31,6 +31,16 @@ class OllamaSettingsTests(TestCase):
         worst_case = settings.OLLAMA_TIMEOUT_SECONDS * (1 + settings.OLLAMA_INVALID_RETRIES)
         self.assertGreater(settings.INSIGHT_JOB_STALE_MINUTES * 60, worst_case)
 
+    def test_task_time_limits_are_derived_from_the_ollama_timeout(self):
+        self.assertEqual(settings.INSIGHT_WORST_CASE_SECONDS, 600)
+        self.assertEqual(settings.INSIGHT_TASK_SOFT_TIME_LIMIT, 660)
+        self.assertEqual(settings.INSIGHT_TASK_TIME_LIMIT, 720)
+
+    def test_the_full_timeout_chain_is_ordered(self):
+        self.assertLess(settings.INSIGHT_WORST_CASE_SECONDS, settings.INSIGHT_TASK_SOFT_TIME_LIMIT)
+        self.assertLess(settings.INSIGHT_TASK_SOFT_TIME_LIMIT, settings.INSIGHT_TASK_TIME_LIMIT)
+        self.assertLess(settings.INSIGHT_TASK_TIME_LIMIT, settings.INSIGHT_JOB_STALE_MINUTES * 60)
+
 
 class StaleWindowSystemCheckTests(TestCase):
     """The django.core.checks registration must catch a bad combination at
@@ -52,6 +62,22 @@ class StaleWindowSystemCheckTests(TestCase):
         self.assertEqual(errors[0].id, 'ai_insights.E001')
         self.assertIn('INSIGHT_JOB_STALE_MINUTES', errors[0].msg)
         self.assertIn('OLLAMA_TIMEOUT_SECONDS', errors[0].msg)
+
+
+class HardLimitSystemCheckTests(TestCase):
+    """E001 must guard the reaper against Celery's hard kill, not just the
+    raw generation budget. A stale window sitting between the two would let
+    the reaper fail a job Celery is still legitimately running."""
+
+    @override_settings(INSIGHT_JOB_STALE_MINUTES=11)  # 660s: > worst case, < hard limit
+    def test_stale_window_below_the_hard_limit_is_an_error(self):
+        errors = check_stale_window_covers_worst_case(None)
+        self.assertEqual(len(errors), 1)
+        self.assertEqual(errors[0].id, 'ai_insights.E001')
+
+    @override_settings(INSIGHT_JOB_STALE_MINUTES=15)  # 900s: > hard limit
+    def test_stale_window_above_the_hard_limit_passes(self):
+        self.assertEqual(check_stale_window_covers_worst_case(None), [])
 
 
 class BaseUrlSchemeSystemCheckTests(TestCase):

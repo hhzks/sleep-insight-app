@@ -6,7 +6,7 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 
-from .jobs import reap_stale_jobs, start_insight_job
+from .jobs import start_insight_job
 from .models import InsightJob, SleepInsight, SleepTip
 from .services import get_relevant_tips
 from .summary import build_sleep_summary
@@ -45,8 +45,6 @@ class InsightJobDetailView(APIView):
 
     def get(self, request, job_id):
         """Return the job's current status and, once finished, its result."""
-        reap_stale_jobs()
-
         job = InsightJob.objects.filter(id=job_id, user=request.user).first()
         if job is None:
             return Response({'error': 'Job not found'}, status=status.HTTP_404_NOT_FOUND)
@@ -61,8 +59,6 @@ class ActiveInsightJobView(APIView):
 
     def get(self, request):
         """Return the active job, or 204 when nothing is running."""
-        reap_stale_jobs()
-
         job = InsightJob.objects.filter(
             user=request.user, status__in=InsightJob.ACTIVE_STATUSES
         ).first()

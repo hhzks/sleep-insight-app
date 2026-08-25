@@ -3,6 +3,7 @@ Django settings for sleep_tracker project.
 """
 
 import os
+import sys
 from pathlib import Path
 from dotenv import load_dotenv
 import dj_database_url
@@ -172,8 +173,20 @@ OLLAMA_NUM_PREDICT = int(os.environ.get('OLLAMA_NUM_PREDICT', '1000'))
 OLLAMA_TEMPERATURE = float(os.environ.get('OLLAMA_TEMPERATURE', '0.7'))
 OLLAMA_INVALID_RETRIES = int(os.environ.get('OLLAMA_INVALID_RETRIES', '1'))
 
-# Must exceed OLLAMA_TIMEOUT_SECONDS * (1 + OLLAMA_INVALID_RETRIES), or the
-# reaper will kill jobs that are still legitimately generating.
+# Worst-case time one generation may legitimately take.
+INSIGHT_WORST_CASE_SECONDS = OLLAMA_TIMEOUT_SECONDS * (1 + OLLAMA_INVALID_RETRIES)
+
+# Celery's two kill switches, derived so that raising OLLAMA_TIMEOUT_SECONDS
+# cannot silently invert the chain. Literals here would mean a raised Ollama
+# timeout gets truncated by Celery instead - visible only as generations that
+# mysteriously stop at the old bound.
+#   soft: raises SoftTimeLimitExceeded, caught by run_insight_job's except
+#   hard: SIGKILLs the worker child, leaving the row for the reaper
+INSIGHT_TASK_SOFT_TIME_LIMIT = INSIGHT_WORST_CASE_SECONDS + 60
+INSIGHT_TASK_TIME_LIMIT = INSIGHT_TASK_SOFT_TIME_LIMIT + 60
+
+# Must exceed INSIGHT_TASK_TIME_LIMIT, or the reaper kills jobs Celery is
+# still running. Enforced by the ai_insights.E001 system check.
 INSIGHT_JOB_STALE_MINUTES = int(os.environ.get('INSIGHT_JOB_STALE_MINUTES', '15'))
 
 # Logging
@@ -197,3 +210,39 @@ LOGGING = {
         },
     },
 }
+
+# Celery
+# Broker only - no result backend. Job state lives on the InsightJob row,
+# which the API already treats as the source of truth.
+CELERY_BROKER_URL = os.environ.get('CELERY_BROKER_URL', 'redis://localhost:6379/0')
+CELERY_RESULT_BACKEND = None
+
+# Celery's Redis transport polls with BRPOP roughly 1-4x per second even when
+# the queue is empty. At the default that is ~350k commands/day of pure idle
+# chatter, which exhausts serverless-Redis quotas on its own. Generations take
+# 2-3 minutes, so 5s of pickup latency is imperceptible. This is a cost
+# control - do not remove it as a "tuning nicety".
+CELERY_BROKER_TRANSPORT_OPTIONS = {'polling_interval': 5}
+
+CELERY_TASK_ACKS_LATE = False
+CELERY_WORKER_PREFETCH_MULTIPLIER = 1
+
+# Reaping used to happen as a side effect of a client polling a job. That
+# coupled cleanup to traffic: with nobody polling, stale rows sat forever.
+CELERY_BEAT_SCHEDULE = {
+    'reap-stale-insight-jobs': {
+        'task': 'ai_insights.reap_stale_jobs',
+        'schedule': 300,  # every 5 minutes
+    },
+}
+
+
+def _celery_tasks_run_eagerly(argv):
+    # argv[1] is the management command itself, so a command that merely
+    # takes a 'test' argument cannot flip this on in a production process.
+    return len(argv) > 1 and argv[1] == 'test'
+
+
+# Tests run tasks inline so the suite needs no broker.
+CELERY_TASK_ALWAYS_EAGER = _celery_tasks_run_eagerly(sys.argv)
+CELERY_TASK_EAGER_PROPAGATES = True

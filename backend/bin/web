@@ -1,0 +1,25 @@
+#!/usr/bin/env sh
+set -e
+
+# gthread + 4 threads: web requests are now plain CRUD/auth work and enqueue
+# generation onto the Celery worker rather than running it here, so a modest
+# thread pool is enough to stay responsive without ballooning memory. At
+# 512MB, 2 workers is the ceiling - if you see OOM kills, either drop to
+# --workers 1 or raise the machine to 1GB in fly.toml.
+#
+# --graceful-timeout is short because nothing in this process outlives a
+# request anymore - generation runs on the worker process, not here - so
+# there is nothing left that needs extra time to wind down on shutdown.
+#
+# exec so gunicorn replaces this shell and receives SIGTERM directly.
+# Without it the shell is PID 1, swallows the signal, and every deploy
+# waits out the full kill timeout instead of shutting down gracefully.
+exec gunicorn sleep_tracker.wsgi:application \
+  --bind 0.0.0.0:8000 \
+  --worker-class gthread \
+  --workers 2 \
+  --threads 4 \
+  --timeout 120 \
+  --graceful-timeout 30 \
+  --access-logfile - \
+  --error-logfile -

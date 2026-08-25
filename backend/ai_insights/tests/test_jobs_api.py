@@ -6,7 +6,7 @@ from datetime import timedelta
 from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
-from django.test import TestCase, override_settings
+from django.test import TestCase
 from django.utils import timezone
 from rest_framework.test import APIClient
 
@@ -40,30 +40,30 @@ class GenerateEndpointTests(TestCase):
         for days_ago in range(1, 8):
             night(self.user, days_ago)
 
-    @patch('ai_insights.jobs._spawn_thread')
-    def test_returns_202_with_a_job_id(self, mock_spawn):
+    @patch('ai_insights.jobs._enqueue')
+    def test_returns_202_with_a_job_id(self, mock_enqueue):
         response = self.client.post('/api/insights/generate/', {'days': 30}, format='json')
         self.assertEqual(response.status_code, 202)
         self.assertEqual(response.data['status'], 'queued')
         self.assertFalse(response.data['already_running'])
         self.assertTrue(InsightJob.objects.filter(id=response.data['job_id']).exists())
 
-    @patch('ai_insights.jobs._spawn_thread')
-    def test_second_request_reports_already_running(self, mock_spawn):
+    @patch('ai_insights.jobs._enqueue')
+    def test_second_request_reports_already_running(self, mock_enqueue):
         first = self.client.post('/api/insights/generate/', {'days': 30}, format='json')
         second = self.client.post('/api/insights/generate/', {'days': 30}, format='json')
         self.assertEqual(second.status_code, 202)
         self.assertTrue(second.data['already_running'])
         self.assertEqual(first.data['job_id'], second.data['job_id'])
 
-    @patch('ai_insights.jobs._spawn_thread')
-    def test_clamps_the_days_parameter(self, mock_spawn):
+    @patch('ai_insights.jobs._enqueue')
+    def test_clamps_the_days_parameter(self, mock_enqueue):
         response = self.client.post('/api/insights/generate/', {'days': 5000}, format='json')
         job = InsightJob.objects.get(id=response.data['job_id'])
         self.assertEqual(job.days, 365)
 
-    @patch('ai_insights.jobs._spawn_thread')
-    def test_defaults_days_when_missing_or_invalid(self, mock_spawn):
+    @patch('ai_insights.jobs._enqueue')
+    def test_defaults_days_when_missing_or_invalid(self, mock_enqueue):
         response = self.client.post('/api/insights/generate/', {'days': 'lots'}, format='json')
         self.assertEqual(InsightJob.objects.get(id=response.data['job_id']).days, 30)
 
@@ -123,24 +123,23 @@ class JobPollingTests(TestCase):
         self.assertEqual(APIClient().get(f'/api/insights/jobs/{job.id}/').status_code, 401)
 
 
-@override_settings(INSIGHT_JOB_STALE_MINUTES=15)
-class StaleJobReapingOnPollTests(TestCase):
-    """A job killed by a restart resolves to failed on the next poll."""
+class StaleJobReapingTests(TestCase):
+    """Reaping is scheduled, not triggered by reads. Polling a stale job now
+    reports it unchanged until beat runs; the reaper itself is covered by
+    ReapStaleJobsTests in test_jobs.py."""
 
     def setUp(self):
         self.user = User.objects.create(email='sleeper@example.com', firebase_uid='uid-1')
         self.client = APIClient()
         self.client.force_authenticate(user=self.user)
 
-    def test_poll_reaps_a_stale_job(self):
-        job = InsightJob.objects.create(
-            user=self.user, days=30, status=InsightJob.STATUS_RUNNING,
-            started_at=timezone.now() - timedelta(minutes=30),
+    def test_polling_does_not_reap(self):
+        job = InsightJob.objects.create(user=self.user, days=30, status=InsightJob.STATUS_RUNNING)
+        InsightJob.objects.filter(pk=job.pk).update(
+            started_at=timezone.now() - timedelta(minutes=60),
         )
-        with self.assertLogs('ai_insights.jobs', 'ERROR'):
-            response = self.client.get(f'/api/insights/jobs/{job.id}/')
-        self.assertEqual(response.data['status'], 'failed')
-        self.assertEqual(response.data['error'], InsightJob.FAILED_MESSAGE)
+        response = self.client.get(f'/api/insights/jobs/{job.id}/')
+        self.assertEqual(response.data['status'], InsightJob.STATUS_RUNNING)
 
 
 class ActiveJobTests(TestCase):

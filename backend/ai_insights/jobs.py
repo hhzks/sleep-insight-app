@@ -1,16 +1,15 @@
 """
 Background execution of insight generation.
 
-Jobs run in a daemon thread on the web process rather than a queue worker,
-because Render has no free background-worker tier. The trade-off is that a
-job dies if the instance restarts or spins down mid-generation; reap_stale_jobs
-converts that into a clean failure instead of a job stuck in 'running'.
+Jobs run on a Celery worker in a separate process. The InsightJob row is the
+only shared state - the worker takes a job_id and writes its outcome back, so
+the web tier never waits on generation.
 
-Swapping this module for Celery later leaves the InsightJob row and the API
-untouched.
+A job whose worker dies stays 'running' until reap_stale_jobs converts it into
+a clean failure; tasks are deliberately not retried, because a redelivered
+generation is duplicated expensive work on a CPU-only box.
 """
 import logging
-import threading
 from datetime import timedelta
 
 from django.conf import settings
@@ -52,17 +51,26 @@ def start_insight_job(user, days):
 
         job = InsightJob.objects.create(user=user, days=days)
 
-    # Spawned after the transaction commits, so the worker thread's own
-    # connection is guaranteed to see the row.
-    _spawn_thread(job.id)
+    # Dispatch is deferred to commit by _enqueue, so this is safe to call
+    # from inside or outside an enclosing transaction.
+    _enqueue(job.id)
     return job, False
 
 
-def _spawn_thread(job_id):
-    """Start the worker thread. Patched in tests to run inline."""
-    thread = threading.Thread(target=run_insight_job, args=(job_id,), daemon=True)
-    thread.start()
-    return thread
+def _enqueue(job_id):
+    """Hand the job to a worker once the row is durably committed.
+
+    on_commit is load-bearing: the worker is a different process and can
+    dequeue before this transaction commits, finding no row.
+
+    The task import is deliberately function-local. Dependencies run one way,
+    tasks.py -> jobs.py; a module-level import back would be circular, and
+    would fail rather than merely being untidy, because tasks.py binds
+    run_insight_job by name while jobs.py is still executing its own imports.
+    """
+    from .tasks import generate_insight_task
+
+    transaction.on_commit(lambda: generate_insight_task.delay(str(job_id)))
 
 
 def run_insight_job(job_id, provider=None):
@@ -71,6 +79,22 @@ def run_insight_job(job_id, provider=None):
         job = InsightJob.objects.filter(pk=job_id).first()
         if job is None:
             logger.warning('insight job %s vanished before it ran', job_id)
+            return
+
+        if job.status not in InsightJob.ACTIVE_STATUSES:
+            # The reaper fails queued jobs on created_at alone, because its
+            # time budget only covers execution, not queue wait. Under
+            # --concurrency=1, a job can legitimately still be queued past
+            # the stale window and get failed out from under it. Without
+            # this guard the worker would then pick it up anyway and drive
+            # an already-failed row through running -> succeeded - duplicate
+            # generation on top of whatever replacement the user already
+            # started. acks_late=False / max_retries=0 exist to prevent
+            # exactly this kind of double work.
+            logger.warning(
+                'insight job %s is %s, not active; skipping (likely reaped)',
+                job_id, job.status,
+            )
             return
 
         job.status = InsightJob.STATUS_RUNNING
@@ -103,7 +127,7 @@ def run_insight_job(job_id, provider=None):
         # never inside an atomic block, so this always fires in production.
         # It only skips when this function is invoked synchronously from
         # inside a wrapping transaction (as tests do, calling it directly
-        # rather than through _spawn_thread) — there, Django's close()
+        # rather than through the Celery task) — there, Django's close()
         # doesn't actually free anything anyway (it just marks the
         # connection dirty for the enclosing atomic() to roll back), so
         # calling it would only corrupt the caller's transaction/connection

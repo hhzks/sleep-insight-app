@@ -1,0 +1,79 @@
+# Fly.io app config. Deploy from this directory: `fly deploy` (or via CI).
+#
+# The app was created with `fly apps create sleepinsight-api --org personal`.
+# primary_region is London to sit next to the Postgres and Redis instances -
+# the web tier queries the database on every request, so a cross-Atlantic hop
+# there would be paid on every page load. The worker's distance from Ollama is
+# not worth optimising by comparison: a generation takes minutes, which dwarfs
+# any round-trip difference. `fly platform regions` lists the codes.
+app = "sleepinsight-api"
+primary_region = "lhr"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[deploy]
+  # Migrations run in a one-off machine that must exit 0 before any new
+  # machine takes traffic. Deliberately NOT in the image build (where
+  # backend/build.sh puts them for Render): a build step races concurrent
+  # deploys and can apply schema changes while the *old* code is still
+  # serving. build.sh is unused on this path - see .dockerignore.
+  release_command = "python manage.py migrate --noinput"
+
+[env]
+  DEBUG = "false"
+  # `.fly.dev` covers the public hostname. `health.check` is the Host header
+  # the checks below send - Fly probes the machine over its private network,
+  # so without this Django rejects every probe with DisallowedHost (400) and
+  # the machine never becomes healthy. Add your custom domain here too.
+  ALLOWED_HOSTS = ".fly.dev,health.check"
+
+# Both entries reference bin/ scripts rather than restating the command,
+# so the Dockerfile CMD and this file cannot drift.
+[processes]
+  web = "/app/bin/web"
+  worker = "/app/bin/worker"
+
+[http_service]
+  processes = ["web"]
+  internal_port = 8000
+  force_https = true
+
+  # Insight generation now runs on the worker process group, not here, so
+  # the web tier no longer runs anything that outlives the HTTP response -
+  # scale-to-zero would no longer cut off in-flight work. Left "off" anyway:
+  # this app deliberately isn't optimising for cost, and min_machines_running
+  # below keeps the health check warm rather than eating cold-start latency
+  # on every visit after idle.
+  auto_stop_machines = "off"
+  auto_start_machines = false
+  min_machines_running = 1
+
+  [[http_service.checks]]
+    grace_period = "15s"
+    interval = "30s"
+    method = "GET"
+    path = "/api/health/"
+    timeout = "5s"
+    [http_service.checks.headers]
+      Host = "health.check"
+
+[[vm]]
+  processes = ["web"]
+  size = "shared-cpu-1x"
+  memory = "512mb"
+
+# Sizing here is chosen, not measured: this machine runs Celery (prefork,
+# so --concurrency=1 means a main process plus one worker child), Django,
+# and firebase-admin together. 512mb is expected to fit but is untested
+# under real load - it's the first value to raise if the worker OOMs.
+#
+# This group is deliberately absent from http_service.checks - it serves no
+# HTTP, so there is nothing for that check to probe. That also means an OOM
+# here takes down generation and the embedded --beat reaper together with
+# no health check watching either: recovery depends on Fly restarting the
+# crashed machine, not on a check catching it first.
+[[vm]]
+  processes = ["worker"]
+  size = "shared-cpu-1x"
+  memory = "512mb"
