@@ -1,4 +1,7 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="#2196f3">
-  <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/>
-  <path d="M17.5 9.5c-.83 0-1.5.67-1.5 1.5v6c0 .83.67 1.5 1.5 1.5s1.5-.67 1.5-1.5v-6c0-.83-.67-1.5-1.5-1.5z" fill="#1a237e"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" role="img" aria-label="Sleep Tracker">
+  <!-- Crescent: outer circle c(16,16) r12 minus cut circle c(26,16) r14, meeting at x=18.4 -->
+  <path fill="#2196f3" d="M18.4 4.24A12 12 0 1 0 18.4 27.76A14 14 0 0 1 18.4 4.24Z"/>
+  <!-- Hypnogram trace descending through the sleep stages, cradled in the crescent -->
+  <path d="M16 11.5H19.5V16.5H23V21.5H25.5" fill="none" stroke="#ffab00"
+        stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round"/>
 </svg>
