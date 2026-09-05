@@ -20,10 +20,21 @@ class FitbitToken(models.Model):
     expires_at = models.DateTimeField()
     scope = models.CharField(max_length=255, default='sleep')
     fitbit_user_id = models.CharField(max_length=50, blank=True)
-    
+
+    auto_sync = models.BooleanField(
+        default=True,
+        help_text="Include this user in the nightly scheduled sync."
+    )
+
+    # Reset to 0 by any successful sync. Only FitbitAuthError increments it,
+    # so a Fitbit outage cannot disconnect anyone. At
+    # FITBIT_MAX_AUTH_FAILURES the token row is deleted, which is exactly
+    # what manual disconnection does, so the UI needs no new state.
+    consecutive_auth_failures = models.PositiveSmallIntegerField(default=0)
+
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
-    
+
     class Meta:
         db_table = 'fitbit_tokens'
     
