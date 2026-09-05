@@ -4,6 +4,8 @@ Fitbit Integration Models
 from django.db import models
 from django.conf import settings
 
+from .fields import EncryptedTextField
+
 
 class FitbitToken(models.Model):
     """Store Fitbit OAuth tokens for users."""
@@ -14,8 +16,8 @@ class FitbitToken(models.Model):
         related_name='fitbit_token'
     )
     
-    access_token = models.TextField()
-    refresh_token = models.TextField()
+    access_token = EncryptedTextField()
+    refresh_token = EncryptedTextField()
     token_type = models.CharField(max_length=50, default='Bearer')
     expires_at = models.DateTimeField()
     scope = models.CharField(max_length=255, default='sleep')

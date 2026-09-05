@@ -84,7 +84,21 @@ Authentication is fully delegated to Firebase: the React app signs the user in w
 
 Sleep data comes from two sources that share the same models: manual entries created in the UI, and records imported through the Fitbit OAuth integration.
 
-Fitbit import runs through one function, `fitbit_integration/sync.py`, which both the "Sync now" button and the nightly scheduled task call, so the two cannot drift. The schedule is a single fixed-UTC run rather than per-user local time: each run re-reads `FITBIT_SYNC_LOOKBACK_DAYS` and every record is keyed on Fitbit's `logId`, so a night that uploads after the run is picked up by the next one as an update. That also makes a missed run self-healing instead of a permanent gap. Failures are classified rather than lumped together - only a rejected authorisation (`FitbitAuthError`) counts towards `FITBIT_MAX_AUTH_FAILURES`, at which point the token is deleted and the user is asked to reconnect; a Fitbit outage (`FitbitUnavailable`) never disconnects anyone. The insights module summarizes recent records (duration, efficiency, sleep stages, consistency, sleep debt) and sends that summary to a self-hosted Ollama server. Because CPU inference takes minutes, generation runs as a Celery task on a separate worker process and the UI polls for the result; if the model is unreachable, slow, or returns malformed output, the app falls back to built-in rule-based analysis and tells the user it did so.
+Fitbit import runs through one function, `fitbit_integration/sync.py`, which both the "Sync now" button and the nightly scheduled task call, so the two cannot drift. The schedule is a single fixed-UTC run rather than per-user local time: each run re-reads `FITBIT_SYNC_LOOKBACK_DAYS` and every record is keyed on Fitbit's `logId`, so a night that uploads after the run is picked up by the next one as an update. That also makes a missed run self-healing instead of a permanent gap. Failures are classified rather than lumped together - only a rejected authorisation (`FitbitAuthError`) counts towards `FITBIT_MAX_AUTH_FAILURES`, at which point the token is deleted and the user is asked to reconnect; a Fitbit outage (`FitbitUnavailable`) never disconnects anyone.
+
+Fitbit access and refresh tokens are encrypted at rest with Fernet, via a `TextField` subclass in `fitbit_integration/fields.py` that encrypts on write and decrypts on read - so `services.py` never sees ciphertext and needs no encryption code of its own. They are long-lived grants that the nightly sync refreshes and uses with no user present, so what an attacker could do with a stolen row is not bounded by anyone's session.
+
+Keys live in `FITBIT_TOKEN_ENCRYPTION_KEYS`, newest first:
+
+```bash
+python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+```
+
+`MultiFernet` decrypts with any key in the list and encrypts with the first, so rotating is: mint a key, prepend it, re-save every `FitbitToken` row, then drop the trailing key. Removing a key that still has rows encrypted under it makes those rows unreadable, and the error says so rather than failing quietly.
+
+> **Set this secret before deploying the migration that introduces it.** `0003_encrypt_tokens_at_rest` converts existing plaintext rows in place and runs in `release_command`. With the key unset it raises `ImproperlyConfigured` and exits non-zero, so Fly aborts the deploy with the old code still serving - safe, but stalled until the secret exists. The conversion skips rows that already decrypt, so a retried release command cannot double-encrypt anything, and the migration reverses cleanly back to plaintext.
+
+Encryption protects the tokens from here on. It does not reach backups or WAL segments written while they were plaintext; those grants stay valid until each user's next refresh replaces them. The insights module summarizes recent records (duration, efficiency, sleep stages, consistency, sleep debt) and sends that summary to a self-hosted Ollama server. Because CPU inference takes minutes, generation runs as a Celery task on a separate worker process and the UI polls for the result; if the model is unreachable, slow, or returns malformed output, the app falls back to built-in rule-based analysis and tells the user it did so.
 
 ## Getting Started
 
@@ -284,6 +298,7 @@ See `backend/.env.example` for the full template.
 | `FITBIT_CLIENT_ID` | Fitbit OAuth client ID |
 | `FITBIT_CLIENT_SECRET` | Fitbit OAuth client secret |
 | `FITBIT_REDIRECT_URI` | Fitbit OAuth callback URL (defaults to `http://localhost:3000/fitbit/callback`) |
+| `FITBIT_TOKEN_ENCRYPTION_KEYS` | Fernet keys for token encryption at rest, newest first, comma-separated (**required**) |
 | `FITBIT_SYNC_LOOKBACK_DAYS` | Days each nightly sync re-reads (defaults to 3) |
 | `FITBIT_MAX_AUTH_FAILURES` | Consecutive auth failures before a user is disconnected (defaults to 3) |
 | `OLLAMA_BASE_URL` | Ollama server URL (defaults to `http://localhost:11434`) |
@@ -419,7 +434,7 @@ Two managed services are required:
 - **PostgreSQL** — any provider, wired in via `DATABASE_URL`
 - **Redis** — the Celery broker, via `CELERY_BROKER_URL`. Use a `rediss://` URL
 
-Set the rest as Fly secrets (`fly secrets set`): `DJANGO_SECRET_KEY`, `FIREBASE_PROJECT_ID`, `FIREBASE_CLIENT_EMAIL`, `FIREBASE_PRIVATE_KEY`, `FITBIT_CLIENT_ID`, `FITBIT_CLIENT_SECRET`, `FITBIT_REDIRECT_URI`, `CORS_ALLOWED_ORIGINS`, `OLLAMA_BASE_URL`, `OLLAMA_API_KEY`.
+Set the rest as Fly secrets (`fly secrets set`): `DJANGO_SECRET_KEY`, `FIREBASE_PROJECT_ID`, `FIREBASE_CLIENT_EMAIL`, `FIREBASE_PRIVATE_KEY`, `FITBIT_CLIENT_ID`, `FITBIT_CLIENT_SECRET`, `FITBIT_REDIRECT_URI`, `FITBIT_TOKEN_ENCRYPTION_KEYS`, `CORS_ALLOWED_ORIGINS`, `OLLAMA_BASE_URL`, `OLLAMA_API_KEY`.
 
 > `FIREBASE_PRIVATE_KEY` must keep its literal `\n` sequences rather than real newlines; `users/firebase_auth.py` expands them on load.
 

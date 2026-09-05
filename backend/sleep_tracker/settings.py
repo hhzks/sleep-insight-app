@@ -163,6 +163,24 @@ FITBIT_CLIENT_ID = os.environ.get('FITBIT_CLIENT_ID', '')
 FITBIT_CLIENT_SECRET = os.environ.get('FITBIT_CLIENT_SECRET', '')
 FITBIT_REDIRECT_URI = os.environ.get('FITBIT_REDIRECT_URI', 'http://localhost:3000/fitbit/callback')
 
+# Fernet keys for Fitbit token encryption at rest, newest first. Rotating:
+# mint a key, prepend it, re-save the rows, then drop the trailing key.
+# Unset is fatal at first use rather than at import, so management commands
+# that never touch a token still run without it.
+FITBIT_TOKEN_ENCRYPTION_KEYS = [
+    key.strip()
+    for key in os.environ.get('FITBIT_TOKEN_ENCRYPTION_KEYS', '').split(',')
+    if key.strip()
+]
+
+# CI deliberately runs with no Fitbit credentials so the suite stays runnable
+# from forks, and most of it touches FitbitToken. Rather than make the key an
+# exception to that, tests fall back to a fixed throwaway one - reusing the
+# same argv check that makes Celery tasks run eagerly, so a production process
+# cannot reach this branch.
+if not FITBIT_TOKEN_ENCRYPTION_KEYS and len(sys.argv) > 1 and sys.argv[1] == 'test':
+    FITBIT_TOKEN_ENCRYPTION_KEYS = ['xUuBjSAdgcOFCM4kL1YIWy_ZBb0AKkFOAJhBTKPFuUo=']
+
 # Consecutive authorisation failures before a user's Fitbit is disconnected.
 # Only FitbitAuthError counts, so this is a tolerance for Fitbit briefly
 # rejecting a grant it later honours - not for outages, which never count.

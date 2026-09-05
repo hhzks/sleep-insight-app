@@ -11,3 +11,7 @@ psycopg2-binary>=2.9.9
 python-dotenv>=1.0.0
 dj-database-url>=2.1.0
 whitenoise>=6.6.0
+# Direct dependency: Fernet encryption of Fitbit tokens at rest
+# (fitbit_integration/fields.py). Present transitively via firebase-admin
+# too, but pinned here so an upstream change cannot remove it.
+cryptography>=42.0
