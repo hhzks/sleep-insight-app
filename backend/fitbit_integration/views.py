@@ -9,12 +9,13 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 
-from sleep.models import SleepRecord, SleepStageData
 from .models import FitbitToken, FitbitSyncLog
-from .services import FitbitService, parse_fitbit_sleep_data
+from .services import FitbitError, FitbitService
+from .sync import sync_user_sleep
 from .serializers import (
     FitbitAuthUrlSerializer,
     FitbitCallbackSerializer,
+    FitbitAutoSyncSerializer,
     FitbitConnectionStatusSerializer,
     FitbitSyncSerializer,
     FitbitSyncLogSerializer
@@ -99,6 +100,7 @@ class FitbitConnectionStatusView(APIView):
                 'fitbit_user_id': token.fitbit_user_id,
                 'connected_at': token.created_at,
                 'last_sync': last_sync.created_at if last_sync else None,
+                'auto_sync': token.auto_sync,
             }
         except FitbitToken.DoesNotExist:
             data = {
@@ -106,10 +108,32 @@ class FitbitConnectionStatusView(APIView):
                 'fitbit_user_id': '',
                 'connected_at': None,
                 'last_sync': None,
+                # Nothing to sync nightly without a connection.
+                'auto_sync': False,
             }
         
         serializer = FitbitConnectionStatusSerializer(data)
         return Response(serializer.data)
+
+    def patch(self, request):
+        """Turn the nightly scheduled sync on or off."""
+        serializer = FitbitAutoSyncSerializer(data=request.data)
+
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+        token = FitbitToken.objects.filter(user=request.user).first()
+
+        if token is None:
+            return Response(
+                {'error': 'Fitbit is not connected'},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        token.auto_sync = serializer.validated_data['auto_sync']
+        token.save(update_fields=['auto_sync'])
+
+        return Response({'auto_sync': token.auto_sync})
     
     def delete(self, request):
         """Disconnect Fitbit."""
@@ -131,96 +155,32 @@ class FitbitSyncView(APIView):
     def post(self, request):
         """Sync sleep data from Fitbit."""
         serializer = FitbitSyncSerializer(data=request.data)
-        
+
         if not serializer.is_valid():
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-        
-        service = FitbitService(user=request.user)
-        
-        # Determine date range
+
         end_date = serializer.validated_data.get('end_date') or timezone.now().date()
         start_date = serializer.validated_data.get('start_date')
-        
+
         if not start_date:
             days = serializer.validated_data.get('days', 30)
             start_date = end_date - timedelta(days=days)
-        
-        sync_log = FitbitSyncLog.objects.create(
-            user=request.user,
-            sync_date=end_date,
-            status='pending'
-        )
-        
+
         try:
-            # Fetch sleep data from Fitbit
-            sleep_data = service.get_sleep_log_range(
-                start_date.strftime('%Y-%m-%d'),
-                end_date.strftime('%Y-%m-%d')
-            )
-            
-            # Parse and save records
-            records = parse_fitbit_sleep_data(sleep_data)
-            records_synced = 0
-            
-            for record_data in records:
-                stage_data = record_data.pop('stage_data', [])
-                
-                # Create or update sleep record
-                sleep_record, created = SleepRecord.objects.update_or_create(
-                    user=request.user,
-                    external_id=record_data['external_id'],
-                    defaults={
-                        'date_of_sleep': record_data['date_of_sleep'],
-                        'start_time': record_data['start_time'],
-                        'end_time': record_data['end_time'],
-                        'duration_minutes': record_data['duration_minutes'],
-                        'minutes_asleep': record_data['minutes_asleep'],
-                        'minutes_awake': record_data['minutes_awake'],
-                        'efficiency': record_data['efficiency'],
-                        'is_main_sleep': record_data['is_main_sleep'],
-                        'sleep_type': record_data['sleep_type'],
-                        'source': 'fitbit',
-                        'deep_sleep_minutes': record_data.get('deep_sleep_minutes'),
-                        'light_sleep_minutes': record_data.get('light_sleep_minutes'),
-                        'rem_sleep_minutes': record_data.get('rem_sleep_minutes'),
-                    }
-                )
-                
-                # Save stage data if available
-                if stage_data and created:
-                    SleepStageData.objects.filter(sleep_record=sleep_record).delete()
-                    for stage in stage_data:
-                        SleepStageData.objects.create(
-                            sleep_record=sleep_record,
-                            stage=stage['stage'],
-                            start_time=stage['start_time'],
-                            duration_seconds=stage['duration_seconds']
-                        )
-                
-                records_synced += 1
-            
-            sync_log.status = 'success'
-            sync_log.records_synced = records_synced
-            sync_log.save()
-            
-            return Response({
-                'message': f'Successfully synced {records_synced} sleep records',
-                'records_synced': records_synced,
-                'date_range': {
-                    'start': start_date,
-                    'end': end_date,
-                }
-            })
-            
-        except Exception as e:
-            sync_log.status = 'failed'
-            sync_log.error_message = str(e)
-            sync_log.save()
-            
-            return Response(
-                {'error': str(e)},
-                status=status.HTTP_400_BAD_REQUEST
-            )
+            outcome = sync_user_sleep(request.user, start_date, end_date)
+        except FitbitError as exc:
+            # sync_user_sleep has already recorded the failure - and, for a
+            # rejected authorisation, counted it towards disconnection.
+            return Response({'error': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+        return Response({
+            'message': f'Successfully synced {outcome.records_synced} sleep records',
+            'records_synced': outcome.records_synced,
+            'date_range': {
+                'start': outcome.start_date,
+                'end': outcome.end_date,
+            }
+        })
 
 
 class FitbitSyncLogView(APIView):

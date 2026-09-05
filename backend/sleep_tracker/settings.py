@@ -5,6 +5,7 @@ Django settings for sleep_tracker project.
 import os
 import sys
 from pathlib import Path
+from celery.schedules import crontab
 from dotenv import load_dotenv
 import dj_database_url
 
@@ -162,6 +163,16 @@ FITBIT_CLIENT_ID = os.environ.get('FITBIT_CLIENT_ID', '')
 FITBIT_CLIENT_SECRET = os.environ.get('FITBIT_CLIENT_SECRET', '')
 FITBIT_REDIRECT_URI = os.environ.get('FITBIT_REDIRECT_URI', 'http://localhost:3000/fitbit/callback')
 
+# Consecutive authorisation failures before a user's Fitbit is disconnected.
+# Only FitbitAuthError counts, so this is a tolerance for Fitbit briefly
+# rejecting a grant it later honours - not for outages, which never count.
+FITBIT_MAX_AUTH_FAILURES = int(os.environ.get('FITBIT_MAX_AUTH_FAILURES', '3'))
+
+# How many days back each scheduled sync re-reads. Devices upload late and
+# Fitbit revises staging after the fact, so a window wider than one night
+# is what makes a missed run self-healing rather than a permanent gap.
+FITBIT_SYNC_LOOKBACK_DAYS = int(os.environ.get('FITBIT_SYNC_LOOKBACK_DAYS', '3'))
+
 # Local model (Ollama) settings for sleep insights.
 # In production OLLAMA_BASE_URL points at an HTTPS reverse proxy that checks
 # OLLAMA_API_KEY; locally it points at a bare Ollama with no token.
@@ -233,6 +244,15 @@ CELERY_BEAT_SCHEDULE = {
     'reap-stale-insight-jobs': {
         'task': 'ai_insights.reap_stale_jobs',
         'schedule': 300,  # every 5 minutes
+    },
+    # A single fixed-UTC run rather than per-user local time: each run
+    # re-reads FITBIT_SYNC_LOOKBACK_DAYS, and imports are keyed on Fitbit's
+    # logId, so a night that lands after the run is picked up by the next
+    # one as an update. The hour therefore affects freshness, never
+    # correctness. 09:00 UTC is late enough that most devices have uploaded.
+    'nightly-fitbit-sync': {
+        'task': 'fitbit_integration.sync_all_users',
+        'schedule': crontab(hour=9, minute=0),
     },
 }
 

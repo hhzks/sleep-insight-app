@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useForm } from 'react-hook-form'
+import { Switch } from '@headlessui/react'
 import { userApi, fitbitApi } from '../services/api'
 import { useAuthStore } from '../stores/authStore'
 import { useSleepStore } from '../stores/sleepStore'
@@ -27,6 +28,7 @@ interface FitbitStatus {
   fitbit_user_id: string
   connected_at: string | null
   last_sync: string | null
+  auto_sync: boolean
 }
 
 export default function SettingsPage() {
@@ -123,11 +125,33 @@ export default function SettingsPage() {
     
     try {
       await fitbitApi.disconnect()
-      setFitbitStatus({ connected: false, fitbit_user_id: '', connected_at: null, last_sync: null })
+      setFitbitStatus({
+        connected: false,
+        fitbit_user_id: '',
+        connected_at: null,
+        last_sync: null,
+        auto_sync: false,
+      })
       toast.success('Fitbit disconnected')
     } catch (error) {
       console.error('Failed to disconnect Fitbit:', error)
       toast.error('Failed to disconnect Fitbit')
+    }
+  }
+
+  const toggleAutoSync = async (enabled: boolean) => {
+    // Optimistic: the switch is the only thing on screen reporting this
+    // value, so waiting on the round trip reads as an unresponsive control.
+    const previous = fitbitStatus
+    setFitbitStatus((current) => (current ? { ...current, auto_sync: enabled } : current))
+
+    try {
+      await fitbitApi.setAutoSync(enabled)
+      toast.success(enabled ? 'Nightly sync on' : 'Nightly sync off')
+    } catch (error) {
+      console.error('Failed to change nightly sync:', error)
+      setFitbitStatus(previous)
+      toast.error('Failed to change nightly sync')
     }
   }
 
@@ -293,6 +317,29 @@ export default function SettingsPage() {
                   </p>
                 )}
               </div>
+            </div>
+
+            <div className="flex items-center justify-between p-4 bg-slate-700/30 rounded-lg">
+              <div className="pr-4">
+                <p className="text-white font-medium">Nightly sync</p>
+                <p className="text-slate-400 text-sm">
+                  Import the last few nights automatically, once a day.
+                </p>
+              </div>
+              <Switch
+                checked={fitbitStatus.auto_sync}
+                onChange={toggleAutoSync}
+                className={`${
+                  fitbitStatus.auto_sync ? 'bg-blue-600' : 'bg-slate-600'
+                } relative inline-flex h-6 w-11 flex-shrink-0 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 focus:ring-offset-slate-800`}
+              >
+                <span className="sr-only">Sync Fitbit nightly</span>
+                <span
+                  className={`${
+                    fitbitStatus.auto_sync ? 'translate-x-6' : 'translate-x-1'
+                  } inline-block h-4 w-4 transform rounded-full bg-white transition-transform`}
+                />
+              </Switch>
             </div>
 
             <div className="flex space-x-3">

@@ -28,6 +28,13 @@ class FitbitConnectionStatusSerializer(serializers.Serializer):
     fitbit_user_id = serializers.CharField(allow_blank=True)
     connected_at = serializers.DateTimeField(allow_null=True)
     last_sync = serializers.DateTimeField(allow_null=True)
+    auto_sync = serializers.BooleanField()
+
+
+class FitbitAutoSyncSerializer(serializers.Serializer):
+    """Serializer for changing the nightly sync preference."""
+
+    auto_sync = serializers.BooleanField()
 
 
 class FitbitSyncSerializer(serializers.Serializer):

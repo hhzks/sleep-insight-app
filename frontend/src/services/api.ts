@@ -77,6 +77,7 @@ export const fitbitApi = {
     api.post('/fitbit/callback/', data),
   getStatus: () => api.get('/fitbit/status/'),
   disconnect: () => api.delete('/fitbit/status/'),
+  setAutoSync: (auto_sync: boolean) => api.patch('/fitbit/status/', { auto_sync }),
   sync: (data?: { start_date?: string; end_date?: string; days?: number }) =>
     api.post('/fitbit/sync/', data || {}),
   getSyncLogs: () => api.get('/fitbit/sync-logs/'),

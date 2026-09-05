@@ -9,6 +9,7 @@ A sleep tracking application with AI-powered insights, Fitbit integration, and F
 - **User Authentication**: Secure login with Firebase (Email/Password + Google Sign-in)
 - **Manual Sleep Logging**: Log your sleep with quality ratings and notes
 - **Fitbit Integration**: Connect via OAuth and sync sleep data from your Fitbit device, with sync history logs
+- **Nightly Sync**: Connected accounts are re-read once a day on the worker, so sleep data arrives without anyone pressing a button (per-user opt-out in Settings)
 - **AI-Powered Insights**: Personalized sleep analysis from a self-hosted Ollama model, generated in the background and polled by the UI (falls back to rule-based analysis when the model is unreachable)
 - **Interactive Dashboard**: Visualize sleep patterns, statistics, and trends with charts
 - **Sleep Goals**: Set sleep targets and track progress against them
@@ -29,7 +30,7 @@ A sleep tracking application with AI-powered insights, Fitbit integration, and F
 - **Django 4.2** with **Django REST Framework**: RESTful API
 - **Firebase Admin SDK**: Server-side token verification (custom DRF authentication class)
 - **Self-hosted Ollama (`qwen2.5:7b-instruct`)**: AI insights generated on your own inference server (falls back to rule-based analysis when the server is unreachable)
-- **Celery + Redis**: Insight generation runs as a task on a separate worker process; a beat schedule embedded in that same worker reaps stale jobs every 5 minutes
+- **Celery + Redis**: Insight generation runs as a task on a separate worker process; a beat schedule embedded in that same worker reaps stale jobs every 5 minutes and runs the nightly Fitbit sync
 - **SQLite** (local default) / **PostgreSQL** (via `DATABASE_URL` or `DB_*` vars)
 - **WhiteNoise + Gunicorn**: Static files and production serving
 
@@ -81,7 +82,9 @@ sleepinsight/
 
 Authentication is fully delegated to Firebase: the React app signs the user in with the Firebase Web SDK and attaches the resulting ID token to every API request. On the backend, a custom DRF authentication class verifies the token with the Firebase Admin SDK and automatically provisions a local Django user on first sight; there is no separate registration endpoint or session/JWT handling to configure.
 
-Sleep data comes from two sources that share the same models: manual entries created in the UI, and records imported through the Fitbit OAuth integration. The insights module summarizes recent records (duration, efficiency, sleep stages, consistency, sleep debt) and sends that summary to a self-hosted Ollama server. Because CPU inference takes minutes, generation runs as a Celery task on a separate worker process and the UI polls for the result; if the model is unreachable, slow, or returns malformed output, the app falls back to built-in rule-based analysis and tells the user it did so.
+Sleep data comes from two sources that share the same models: manual entries created in the UI, and records imported through the Fitbit OAuth integration.
+
+Fitbit import runs through one function, `fitbit_integration/sync.py`, which both the "Sync now" button and the nightly scheduled task call, so the two cannot drift. The schedule is a single fixed-UTC run rather than per-user local time: each run re-reads `FITBIT_SYNC_LOOKBACK_DAYS` and every record is keyed on Fitbit's `logId`, so a night that uploads after the run is picked up by the next one as an update. That also makes a missed run self-healing instead of a permanent gap. Failures are classified rather than lumped together - only a rejected authorisation (`FitbitAuthError`) counts towards `FITBIT_MAX_AUTH_FAILURES`, at which point the token is deleted and the user is asked to reconnect; a Fitbit outage (`FitbitUnavailable`) never disconnects anyone. The insights module summarizes recent records (duration, efficiency, sleep stages, consistency, sleep debt) and sends that summary to a self-hosted Ollama server. Because CPU inference takes minutes, generation runs as a Celery task on a separate worker process and the UI polls for the result; if the model is unreachable, slow, or returns malformed output, the app falls back to built-in rule-based analysis and tells the user it did so.
 
 ## Getting Started
 
@@ -281,6 +284,8 @@ See `backend/.env.example` for the full template.
 | `FITBIT_CLIENT_ID` | Fitbit OAuth client ID |
 | `FITBIT_CLIENT_SECRET` | Fitbit OAuth client secret |
 | `FITBIT_REDIRECT_URI` | Fitbit OAuth callback URL (defaults to `http://localhost:3000/fitbit/callback`) |
+| `FITBIT_SYNC_LOOKBACK_DAYS` | Days each nightly sync re-reads (defaults to 3) |
+| `FITBIT_MAX_AUTH_FAILURES` | Consecutive auth failures before a user is disconnected (defaults to 3) |
 | `OLLAMA_BASE_URL` | Ollama server URL (defaults to `http://localhost:11434`) |
 | `OLLAMA_API_KEY` | Ollama bearer token (blank locally; set for production proxies) |
 | `OLLAMA_MODEL` | Model name (defaults to `qwen2.5:7b-instruct`) |
@@ -349,6 +354,7 @@ List endpoints are paginated (20 per page).
 - `POST /api/fitbit/callback/` - Handle OAuth callback
 - `GET /api/fitbit/status/` - Get connection status
 - `DELETE /api/fitbit/status/` - Disconnect Fitbit
+- `PATCH /api/fitbit/status/` - Turn nightly sync on or off
 - `POST /api/fitbit/sync/` - Sync sleep data
 - `GET /api/fitbit/sync-logs/` - Get sync history
 
@@ -417,7 +423,7 @@ Set the rest as Fly secrets (`fly secrets set`): `DJANGO_SECRET_KEY`, `FIREBASE_
 
 > `FIREBASE_PRIVATE_KEY` must keep its literal `\n` sequences rather than real newlines; `users/firebase_auth.py` expands them on load.
 
-Scaling the `worker` group past one machine will duplicate every scheduled reap, because beat is embedded in the worker. Promote beat to its own process group first.
+Scaling the `worker` group past one machine will duplicate every scheduled reap *and* fan out the nightly Fitbit sync twice, because beat is embedded in the worker. Promote beat to its own process group first.
 
 ### Frontend — Cloudflare Pages
 

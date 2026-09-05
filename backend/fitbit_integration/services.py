@@ -12,6 +12,27 @@ from django.utils import timezone
 from .models import FitbitToken
 
 
+class FitbitError(Exception):
+    """Base class for every failure talking to Fitbit."""
+
+
+class FitbitAuthError(FitbitError):
+    """The user's authorisation is gone; only reconnecting fixes it.
+
+    Raised for a rejected refresh token and for a 401 that survives the
+    refresh-and-retry. The scheduled sync counts these towards
+    disconnecting the user, so nothing transient may raise this.
+    """
+
+
+class FitbitUnavailable(FitbitError):
+    """Fitbit could not be reached or would not answer right now.
+
+    Network failures, 5xx, and 429. Retrying later is the right response;
+    the user's authorisation is not in question.
+    """
+
+
 class FitbitService:
     """Service for interacting with Fitbit API."""
     
@@ -92,12 +113,25 @@ class FitbitService:
             'refresh_token': refresh_token,
         }
         
-        response = requests.post(self.TOKEN_URL, headers=headers, data=data)
-        
+        try:
+            response = requests.post(self.TOKEN_URL, headers=headers, data=data)
+        except requests.RequestException as exc:
+            raise FitbitUnavailable(f"Token refresh could not reach Fitbit: {exc}") from exc
+
         if response.status_code == 200:
             return response.json()
-        else:
-            raise Exception(f"Token refresh failed: {response.status_code} - {response.text}")
+
+        # Fitbit answers a dead refresh token with 400 invalid_grant, and a
+        # bad client credential with 401. Both mean reconnecting is the only
+        # way forward; anything else is Fitbit's problem, not the user's.
+        if response.status_code in (400, 401):
+            raise FitbitAuthError(
+                f"Token refresh rejected: {response.status_code} - {response.text}"
+            )
+
+        raise FitbitUnavailable(
+            f"Token refresh failed: {response.status_code} - {response.text}"
+        )
     
     def save_tokens(self, token_data):
         """Save tokens for the user."""
@@ -128,7 +162,7 @@ class FitbitService:
         try:
             token = FitbitToken.objects.get(user=self.user)
         except FitbitToken.DoesNotExist:
-            raise Exception("User has not connected Fitbit")
+            raise FitbitAuthError("User has not connected Fitbit")
         
         if token.is_expired:
             # Refresh the token
@@ -148,25 +182,37 @@ class FitbitService:
         }
         
         url = f"{self.API_BASE_URL}{endpoint}"
-        
-        response = requests.request(method, url, headers=headers, **kwargs)
-        
-        if response.status_code == 200:
-            return response.json()
-        elif response.status_code == 401:
-            # Token might be invalid, try refreshing
+
+        response = self._send(method, url, headers=headers, **kwargs)
+
+        if response.status_code == 401:
+            # The access token may merely be stale. Refresh once and retry;
+            # a second 401 means the authorisation itself is gone.
             token = FitbitToken.objects.get(user=self.user)
             token_data = self.refresh_access_token(token.refresh_token)
             self.save_tokens(token_data)
-            
-            # Retry request
+
             headers['Authorization'] = f'Bearer {token_data["access_token"]}'
-            response = requests.request(method, url, headers=headers, **kwargs)
-            
-            if response.status_code == 200:
-                return response.json()
-        
-        raise Exception(f"API request failed: {response.status_code} - {response.text}")
+            response = self._send(method, url, headers=headers, **kwargs)
+
+            if response.status_code == 401:
+                raise FitbitAuthError(
+                    f"Authorisation rejected after refresh: {response.text}"
+                )
+
+        if response.status_code == 200:
+            return response.json()
+
+        raise FitbitUnavailable(
+            f"API request failed: {response.status_code} - {response.text}"
+        )
+
+    def _send(self, method, url, **kwargs):
+        """Issue one HTTP request, mapping transport failures to FitbitUnavailable."""
+        try:
+            return requests.request(method, url, **kwargs)
+        except requests.RequestException as exc:
+            raise FitbitUnavailable(f"Could not reach Fitbit: {exc}") from exc
     
     def get_sleep_log_by_date(self, date):
         """Get sleep log for a specific date."""

@@ -4,7 +4,7 @@ import type { InternalAxiosRequestConfig } from 'axios'
 vi.mock('./firebase', () => ({ getIdToken: vi.fn() }))
 
 import { getIdToken } from './firebase'
-import api, { sleepApi } from './api'
+import api, { fitbitApi, sleepApi } from './api'
 
 const mockedGetIdToken = vi.mocked(getIdToken)
 
@@ -50,5 +50,24 @@ describe('api auth interceptor', () => {
 
     await expect(sleepApi.getRecords()).rejects.toThrow(/not signed in/i)
     expect(adapter).not.toHaveBeenCalled()
+  })
+})
+
+describe('fitbitApi.setAutoSync', () => {
+  afterEach(() => {
+    vi.clearAllMocks()
+  })
+
+  it('patches the connection status with the new preference', async () => {
+    mockedGetIdToken.mockResolvedValue('token-123')
+    const adapter = stubAdapter()
+    api.defaults.adapter = adapter
+
+    await fitbitApi.setAutoSync(false)
+
+    const config = adapter.mock.calls[0][0]
+    expect(config.method).toBe('patch')
+    expect(config.url).toBe('/fitbit/status/')
+    expect(JSON.parse(config.data)).toEqual({ auto_sync: false })
   })
 })
