@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { Link, Outlet, useLocation } from 'react-router-dom'
 import { useAuthStore } from '../stores/authStore'
+import type { AuthUser } from '../services/firebase'
 import {
   HomeIcon,
   MoonIcon,
@@ -19,6 +20,53 @@ const navigation = [
   { name: 'Insights', href: '/insights', icon: LightBulbIcon },
   { name: 'Settings', href: '/settings', icon: Cog6ToothIcon },
 ]
+
+interface UserFooterProps {
+  user: AuthUser | null
+  onLogout: () => void
+  className?: string
+}
+
+// Rendered by both sidebars. Kept in one place because the desktop copy
+// used to be the only one: the mobile drawer shipped without it, leaving
+// phone users with no way to sign out at all.
+function UserFooter({ user, onLogout, className = '' }: UserFooterProps) {
+  return (
+    <div className={`flex-shrink-0 px-4 py-4 border-t border-slate-700 ${className}`}>
+      <div className="flex items-center">
+        <div className="flex-shrink-0">
+          {user?.photoURL ? (
+            <img
+              className="h-10 w-10 rounded-full"
+              src={user.photoURL}
+              alt=""
+            />
+          ) : (
+            <div className="h-10 w-10 rounded-full bg-blue-600 flex items-center justify-center text-white font-medium">
+              {user?.displayName?.[0] || user?.email?.[0] || '?'}
+            </div>
+          )}
+        </div>
+        <div className="ml-3 flex-1 min-w-0">
+          <p className="text-sm font-medium text-white truncate">
+            {user?.displayName || 'User'}
+          </p>
+          <p className="text-xs text-slate-400 truncate">{user?.email}</p>
+        </div>
+        <button
+          onClick={onLogout}
+          // 12px around a 20px icon is a 44px tap target, the minimum iOS
+          // and Android both recommend. Only the drawer needs it - it alone
+          // renders below lg, and the desktop sidebar has a cursor.
+          className="ml-2 p-3 lg:p-2 text-slate-400 hover:text-white rounded-lg hover:bg-slate-700"
+          title="Sign out"
+        >
+          <ArrowRightOnRectangleIcon className="h-5 w-5" />
+        </button>
+      </div>
+    </div>
+  )
+}
 
 export default function Layout() {
   const [sidebarOpen, setSidebarOpen] = useState(false)
@@ -43,7 +91,7 @@ export default function Layout() {
           className="fixed inset-0 bg-slate-900/80"
           onClick={() => setSidebarOpen(false)}
         />
-        <div className="fixed inset-y-0 left-0 w-64 bg-slate-800 p-4">
+        <div className="fixed inset-y-0 left-0 w-64 bg-slate-800 p-4 flex flex-col">
           <div className="flex items-center justify-between mb-8">
             <div className="flex items-center space-x-2">
               <MoonIcon className="h-8 w-8 text-blue-500" />
@@ -56,7 +104,7 @@ export default function Layout() {
               <XMarkIcon className="h-6 w-6" />
             </button>
           </div>
-          <nav className="space-y-1">
+          <nav className="flex-1 space-y-1">
             {navigation.map((item) => {
               const isActive = location.pathname === item.href
               return (
@@ -76,6 +124,9 @@ export default function Layout() {
               )
             })}
           </nav>
+          {/* -mx-4 cancels the drawer's own padding so the divider spans
+              its full width, matching the desktop sidebar. */}
+          <UserFooter user={user} onLogout={handleLogout} className="-mx-4" />
         </div>
       </div>
 
@@ -105,36 +156,7 @@ export default function Layout() {
               )
             })}
           </nav>
-          <div className="flex-shrink-0 px-4 py-4 border-t border-slate-700">
-            <div className="flex items-center">
-              <div className="flex-shrink-0">
-                {user?.photoURL ? (
-                  <img
-                    className="h-10 w-10 rounded-full"
-                    src={user.photoURL}
-                    alt=""
-                  />
-                ) : (
-                  <div className="h-10 w-10 rounded-full bg-blue-600 flex items-center justify-center text-white font-medium">
-                    {user?.displayName?.[0] || user?.email?.[0] || '?'}
-                  </div>
-                )}
-              </div>
-              <div className="ml-3 flex-1 min-w-0">
-                <p className="text-sm font-medium text-white truncate">
-                  {user?.displayName || 'User'}
-                </p>
-                <p className="text-xs text-slate-400 truncate">{user?.email}</p>
-              </div>
-              <button
-                onClick={handleLogout}
-                className="ml-2 p-2 text-slate-400 hover:text-white rounded-lg hover:bg-slate-700"
-                title="Sign out"
-              >
-                <ArrowRightOnRectangleIcon className="h-5 w-5" />
-              </button>
-            </div>
-          </div>
+          <UserFooter user={user} onLogout={handleLogout} />
         </div>
       </div>
 
