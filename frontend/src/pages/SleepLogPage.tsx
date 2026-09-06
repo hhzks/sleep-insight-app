@@ -132,7 +132,7 @@ export default function SleepLogPage() {
       {/* Add Sleep Form Modal */}
       {showForm && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/80">
-          <div className="bg-slate-800 rounded-xl p-6 w-full max-w-lg mx-4 max-h-[90vh] overflow-y-auto">
+          <div className="bg-slate-800 rounded-xl p-4 sm:p-6 w-full max-w-lg mx-4 max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between mb-6">
               <h2 className="text-xl font-bold text-white">Log Sleep</h2>
               <button
@@ -160,7 +160,7 @@ export default function SleepLogPage() {
                 )}
               </div>
 
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
                   <label className="label">Bedtime</label>
                   <input
@@ -194,7 +194,7 @@ export default function SleepLogPage() {
 
               <div>
                 <label className="label">Stress Level</label>
-                <div className="flex items-center space-x-4">
+                <div className="flex items-center space-x-3 sm:space-x-4">
                   <span className="text-sm text-slate-400">Low</span>
                   <input
                     type="range"
