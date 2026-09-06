@@ -256,7 +256,7 @@ export default function SettingsPage() {
             />
           </div>
 
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
               <label className="label">Target Bedtime</label>
               <input
