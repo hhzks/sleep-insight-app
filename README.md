@@ -184,6 +184,20 @@ Oracle Cloud Ampere A1 instance (ARM64, CPU-only) since that's what I'm using, b
    This reports reachability, auth, model availability, and round-trip time,
    naming the likely cause for each failure mode.
 
+7. **Evaluate output quality** after you change `OLLAMA_MODEL` or the prompt:
+
+   ```bash
+   python manage.py eval_insights --runs 1 --output eval.json
+   ```
+
+   This sends six fixed sleep summaries to the model, with no retry and no
+   fallback, and reports per case: first-attempt validity, score against the
+   rule-based score, insight count, whether poor data raises an alert, numbers
+   the model stated that are not in the data, and latency. It also checks that
+   good cases outscore poor ones. The checks do not judge the advice itself,
+   so read the raw responses in `eval.json` too. Use `--case <name>` to run
+   one case; each run takes minutes on CPU.
+
 ### Setting up the app (local version)
 
 #### 1. Clone the Repository
