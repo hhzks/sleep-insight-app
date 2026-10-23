@@ -250,7 +250,9 @@ CELERY_RESULT_BACKEND = None
 # the queue is empty. At the default that is ~350k commands/day of pure idle
 # chatter, which exhausts serverless-Redis quotas on its own. Generations take
 # 2-3 minutes, so 5s of pickup latency is imperceptible. This is a cost
-# control - do not remove it as a "tuning nicety".
+# control - do not remove it as a "tuning nicety". Polling is not the only
+# idle cost: the worker heartbeat was the larger one, and bin/worker turns
+# it off.
 CELERY_BROKER_TRANSPORT_OPTIONS = {'polling_interval': 5}
 
 CELERY_TASK_ACKS_LATE = False

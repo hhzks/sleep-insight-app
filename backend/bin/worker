@@ -18,8 +18,18 @@ set -e
 # failure to open its schedule file does NOT crash the worker - the worker
 # keeps consuming the queue while beat quietly dies on every boot, so
 # scheduled reaping silently never runs. Do not "tidy" this flag away.
+#
+# --without-heartbeat/gossip/mingle are a Redis cost control. The heartbeat
+# alone PUBLISHes every 2s (~43k commands/day) even with task events off,
+# because gossip and heartbeat keep the event dispatcher enabled. All three
+# exist for multi-worker coordination and monitors like Flower; with one
+# worker and no monitor they buy nothing. See CELERY_BROKER_TRANSPORT_OPTIONS
+# in settings.py for the polling side of the same budget.
 exec celery -A sleep_tracker worker \
   --concurrency=1 \
+  --without-heartbeat \
+  --without-gossip \
+  --without-mingle \
   --beat \
   --schedule=/tmp/celerybeat-schedule \
   --loglevel=info
