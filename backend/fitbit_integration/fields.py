@@ -3,7 +3,7 @@
 These are long-lived Fitbit grants, and since the nightly sync refreshes
 and uses them with no user present, their usefulness to anyone reading the
 database is not bounded by a session. They are stored as Fernet ciphertext
-and decrypted only on the way into FitbitService.
+and decrypted only on the way into GoogleHealthService.
 
 Keys come from FITBIT_TOKEN_ENCRYPTION_KEYS, newest first. MultiFernet
 decrypts with any key in the list and encrypts with the first, so rotating

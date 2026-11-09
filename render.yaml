@@ -31,11 +31,11 @@ services:
         sync: false
       - key: FIREBASE_CLIENT_EMAIL
         sync: false
-      - key: FITBIT_CLIENT_ID
+      - key: GOOGLE_HEALTH_CLIENT_ID
         sync: false
-      - key: FITBIT_CLIENT_SECRET
+      - key: GOOGLE_HEALTH_CLIENT_SECRET
         sync: false
-      - key: FITBIT_REDIRECT_URI
+      - key: GOOGLE_HEALTH_REDIRECT_URI
         sync: false
       - key: OLLAMA_BASE_URL
         sync: false

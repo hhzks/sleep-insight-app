@@ -1,6 +1,6 @@
-"""Importing Fitbit sleep data.
+"""Importing Fitbit sleep data through the Google Health API.
 
-The single place sleep records arrive from Fitbit. Both entry points call
+The single place sleep records arrive from Fitbit devices. Both entry points call
 it - the "Sync now" button and the nightly scheduled task - so failure
 accounting cannot drift between them. Task bodies stay in tasks.py; this
 module has no Celery import and is testable without a broker, matching
@@ -8,7 +8,7 @@ the split ai_insights uses.
 """
 import logging
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, timedelta
 
 from django.conf import settings
 from django.db import transaction
@@ -16,7 +16,12 @@ from django.db import transaction
 from sleep.models import SleepRecord, SleepStageData
 
 from .models import FitbitSyncLog, FitbitToken
-from .services import FitbitAuthError, FitbitError, FitbitService, parse_fitbit_sleep_data
+from .services import (
+    FitbitAuthError,
+    FitbitError,
+    GoogleHealthService,
+    parse_google_health_sleep,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -43,14 +48,11 @@ def sync_user_sleep(user, start_date, end_date):
         status='pending',
     )
 
-    service = FitbitService(user=user)
+    service = GoogleHealthService(user=user)
 
     try:
-        sleep_data = service.get_sleep_log_range(
-            start_date.strftime('%Y-%m-%d'),
-            end_date.strftime('%Y-%m-%d'),
-        )
-        records_synced = _save_records(user, parse_fitbit_sleep_data(sleep_data))
+        data_points = service.list_sleep(start_date, end_date)
+        records_synced = _save_records(user, parse_google_health_sleep(data_points))
     except FitbitError as exc:
         _record_failure(user, sync_log, exc)
         raise
@@ -81,6 +83,7 @@ def _save_records(user, records):
         stage_data = record_data.pop('stage_data', [])
 
         with transaction.atomic():
+            _adopt_legacy_record(user, record_data)
             sleep_record, _ = SleepRecord.objects.update_or_create(
                 user=user,
                 external_id=record_data['external_id'],
@@ -118,6 +121,37 @@ def _save_records(user, records):
         saved += 1
 
     return saved
+
+
+def _adopt_legacy_record(user, record_data):
+    """Re-key a night imported from the legacy Fitbit Web API.
+
+    Google Health data point ids are not Fitbit logIds, so without this a
+    re-sync of an already-imported night would create a second record. A
+    legacy record for the same user that starts within a minute is the
+    same night; give it the new id so update_or_create updates it.
+    """
+    external_id = record_data['external_id']
+    if SleepRecord.objects.filter(user=user, external_id=external_id).exists():
+        return
+
+    start = record_data['start_time']
+    legacy = (
+        SleepRecord.objects
+        .filter(
+            user=user,
+            source='fitbit',
+            start_time__gte=start - timedelta(minutes=1),
+            start_time__lte=start + timedelta(minutes=1),
+            # Fitbit logIds are all digits. This keeps one Google Health
+            # record from taking over another one that starts at the same time.
+            external_id__regex=r'^[0-9]+$',
+        )
+        .first()
+    )
+    if legacy is not None:
+        legacy.external_id = external_id
+        legacy.save(update_fields=['external_id'])
 
 
 def _record_failure(user, sync_log, exc):

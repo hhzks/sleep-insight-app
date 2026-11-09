@@ -78,16 +78,26 @@ class SyncEndpointTests(TestCase):
         response = self.client.post('/api/fitbit/sync/', {'days': 30}, format='json')
         self.assertEqual(response.status_code, 400)
 
-    @patch('fitbit_integration.sync.FitbitService.get_sleep_log_range')
+    @patch('fitbit_integration.sync.GoogleHealthService.list_sleep')
     def test_writes_records_end_to_end(self, mock_range):
         # One test that does not stub sync_user_sleep, so the wiring between
         # view and service is exercised rather than asserted about.
-        mock_range.return_value = {'sleep': [{
-            'logId': '2002', 'dateOfSleep': '2026-09-01',
-            'startTime': '2026-09-01T23:00:00.000Z', 'endTime': '2026-09-02T07:00:00.000Z',
-            'duration': 28800000, 'minutesAsleep': 450, 'minutesAwake': 30,
-            'efficiency': 94, 'isMainSleep': True, 'type': 'stages', 'levels': {},
-        }]}
+        mock_range.return_value = [{
+            'name': 'users/111/dataTypes/sleep/dataPoints/2002',
+            'sleep': {
+                'interval': {
+                    'startTime': '2026-09-01T23:00:00Z', 'startUtcOffset': '0s',
+                    'endTime': '2026-09-02T07:00:00Z', 'endUtcOffset': '0s',
+                },
+                'type': 'CLASSIC',
+                'metadata': {'main': True},
+                'summary': {
+                    'minutesInSleepPeriod': '480',
+                    'minutesAsleep': '450',
+                    'minutesAwake': '30',
+                },
+            },
+        }]
 
         response = self.client.post('/api/fitbit/sync/', {'days': 30}, format='json')
 

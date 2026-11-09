@@ -10,7 +10,7 @@ from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 
 from .models import FitbitToken, FitbitSyncLog
-from .services import FitbitError, FitbitService
+from .services import FitbitError, GoogleHealthService
 from .sync import sync_user_sleep
 from .serializers import (
     FitbitAuthUrlSerializer,
@@ -23,13 +23,13 @@ from .serializers import (
 
 
 class FitbitAuthUrlView(APIView):
-    """Generate Fitbit authorization URL."""
+    """Generate the Google consent URL for Fitbit sleep data."""
     
     permission_classes = [IsAuthenticated]
     
     def get(self, request):
         """Get authorization URL for Fitbit OAuth flow."""
-        service = FitbitService()
+        service = GoogleHealthService()
         
         code_verifier = service.generate_code_verifier()
         code_challenge = service.generate_code_challenge(code_verifier)
@@ -59,22 +59,20 @@ class FitbitCallbackView(APIView):
         if not serializer.is_valid():
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
         
-        service = FitbitService(user=request.user)
+        service = GoogleHealthService(user=request.user)
         
         try:
-            token_data = service.exchange_code_for_tokens(
+            token = service.connect(
                 serializer.validated_data['code'],
                 serializer.validated_data['code_verifier']
             )
             
-            service.save_tokens(token_data)
-            
             return Response({
                 'message': 'Fitbit connected successfully',
-                'fitbit_user_id': token_data.get('user_id', ''),
+                'fitbit_user_id': token.fitbit_user_id,
             })
             
-        except Exception as e:
+        except FitbitError as e:
             return Response(
                 {'error': str(e)},
                 status=status.HTTP_400_BAD_REQUEST

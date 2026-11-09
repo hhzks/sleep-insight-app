@@ -373,6 +373,8 @@ export default function SettingsPage() {
           <div className="space-y-4">
             <p className="text-slate-400">
               Connect your Fitbit account to automatically sync your sleep data.
+              You sign in with the Google account that your Fitbit is linked to.
+              If you connected Fitbit before November 2026, connect again.
             </p>
             <button
               onClick={connectFitbit}

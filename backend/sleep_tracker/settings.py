@@ -158,10 +158,14 @@ FIREBASE_CONFIG = {
     'CLIENT_EMAIL': os.environ.get('FIREBASE_CLIENT_EMAIL', ''),
 }
 
-# Fitbit API settings
-FITBIT_CLIENT_ID = os.environ.get('FITBIT_CLIENT_ID', '')
-FITBIT_CLIENT_SECRET = os.environ.get('FITBIT_CLIENT_SECRET', '')
-FITBIT_REDIRECT_URI = os.environ.get('FITBIT_REDIRECT_URI', 'http://localhost:3000/fitbit/callback')
+# Google Health API OAuth client (Google Cloud console, "Web application").
+# Fitbit devices report through the Google Health API since Google turned
+# off the legacy Fitbit Web API on 2 November 2026.
+GOOGLE_HEALTH_CLIENT_ID = os.environ.get('GOOGLE_HEALTH_CLIENT_ID', '')
+GOOGLE_HEALTH_CLIENT_SECRET = os.environ.get('GOOGLE_HEALTH_CLIENT_SECRET', '')
+GOOGLE_HEALTH_REDIRECT_URI = os.environ.get(
+    'GOOGLE_HEALTH_REDIRECT_URI', 'http://localhost:3000/fitbit/callback'
+)
 
 # Fernet keys for Fitbit token encryption at rest, newest first. Rotating:
 # mint a key, prepend it, re-save the rows, then drop the trailing key.
