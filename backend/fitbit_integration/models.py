@@ -8,7 +8,11 @@ from .fields import EncryptedTextField
 
 
 class FitbitToken(models.Model):
-    """Store Fitbit OAuth tokens for users."""
+    """Store Google Health OAuth tokens for a user's Fitbit sleep data.
+
+    The name stays from the legacy Fitbit Web API. Since migration 0004
+    every row holds a Google OAuth grant.
+    """
     
     user = models.OneToOneField(
         settings.AUTH_USER_MODEL,
@@ -20,8 +24,12 @@ class FitbitToken(models.Model):
     refresh_token = EncryptedTextField()
     token_type = models.CharField(max_length=50, default='Bearer')
     expires_at = models.DateTimeField()
-    scope = models.CharField(max_length=255, default='sleep')
-    fitbit_user_id = models.CharField(max_length=50, blank=True)
+    scope = models.CharField(
+        max_length=255,
+        default='https://www.googleapis.com/auth/googlehealth.sleep.readonly',
+    )
+    # The Google Health user id (healthUserId), up to 63 characters.
+    fitbit_user_id = models.CharField(max_length=64, blank=True)
 
     auto_sync = models.BooleanField(
         default=True,

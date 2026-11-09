@@ -8,7 +8,7 @@ A sleep tracking application with AI-powered insights, Fitbit integration, and F
 
 - **User Authentication**: Secure login with Firebase (Email/Password + Google Sign-in)
 - **Manual Sleep Logging**: Log your sleep with quality ratings and notes
-- **Fitbit Integration**: Connect via OAuth and sync sleep data from your Fitbit device, with sync history logs
+- **Fitbit Integration**: Connect through Google OAuth and sync sleep data from your Fitbit device through the Google Health API, with sync history logs
 - **Nightly Sync**: Connected accounts are re-read once a day on the worker, so sleep data arrives without anyone pressing a button (per-user opt-out in Settings)
 - **AI-Powered Insights**: Personalized sleep analysis from a self-hosted Ollama model, generated in the background and polled by the UI (falls back to rule-based analysis when the model is unreachable)
 - **Interactive Dashboard**: Visualize sleep patterns, statistics, and trends with charts
@@ -84,7 +84,7 @@ Authentication is fully delegated to Firebase: the React app signs the user in w
 
 Sleep data comes from two sources that share the same models: manual entries created in the UI, and records imported through the Fitbit OAuth integration.
 
-Fitbit import runs through one function, `fitbit_integration/sync.py`, which both the "Sync now" button and the nightly scheduled task call, so the two cannot drift. The schedule is a single fixed-UTC run rather than per-user local time: each run re-reads `FITBIT_SYNC_LOOKBACK_DAYS` and every record is keyed on Fitbit's `logId`, so a night that uploads after the run is picked up by the next one as an update. That also makes a missed run self-healing instead of a permanent gap. Failures are classified rather than lumped together - only a rejected authorisation (`FitbitAuthError`) counts towards `FITBIT_MAX_AUTH_FAILURES`, at which point the token is deleted and the user is asked to reconnect; a Fitbit outage (`FitbitUnavailable`) never disconnects anyone.
+Fitbit import runs through one function, `fitbit_integration/sync.py`, which both the "Sync now" button and the nightly scheduled task call, so the two cannot drift. The schedule is a single fixed-UTC run rather than per-user local time: each run re-reads `FITBIT_SYNC_LOOKBACK_DAYS` and every record is keyed on its Google Health data point id, so a night that uploads after the run is picked up by the next one as an update. That also makes a missed run self-healing instead of a permanent gap. Failures are classified rather than lumped together - only a rejected authorisation (`FitbitAuthError`) counts towards `FITBIT_MAX_AUTH_FAILURES`, at which point the token is deleted and the user is asked to reconnect; a Fitbit outage (`FitbitUnavailable`) never disconnects anyone.
 
 Fitbit access and refresh tokens are encrypted at rest with Fernet, via a `TextField` subclass in `fitbit_integration/fields.py` that encrypts on write and decrypts on read - so `services.py` never sees ciphertext and needs no encryption code of its own. They are long-lived grants that the nightly sync refreshes and uses with no user present, so what an attacker could do with a stolen row is not bounded by anyone's session.
 
@@ -107,7 +107,7 @@ Encryption protects the tokens from here on. It does not reach backups or WAL se
 - Python 3.10+
 - Node.js 18+
 - Firebase project (required, handles all authentication)
-- Fitbit Developer account (optional, only for device sync)
+- Google Cloud project with the Google Health API (optional, only for Fitbit device sync)
 - Self-hosted Ollama server (optional, AI insights fall back to rule-based analysis if unavailable)
 - Redis (required to run the Celery worker; without it, AI insight requests stay `queued` forever - even the rule-based fallback path runs as a Celery task)
 
@@ -218,10 +218,14 @@ cd sleep-insight-app
 
 #### 3. Fitbit Setup (Optional)
 
-1. Register an app at [Fitbit Developer](https://dev.fitbit.com/apps)
-2. Set OAuth 2.0 Application Type to "Personal"
-3. Set Callback URL to `http://localhost:3000/fitbit/callback`
+Google turned off the legacy Fitbit Web API on 2 November 2026. Fitbit sleep data now comes from the [Google Health API](https://developers.google.com/health).
+
+1. In the [Google Cloud console](https://console.cloud.google.com/), create a project and enable the Google Health API
+2. Configure the OAuth consent screen and add the scope `https://www.googleapis.com/auth/googlehealth.sleep.readonly`. In "Testing" status, add each user as a test user (limit 100), and note that refresh tokens expire after 7 days
+3. Create an OAuth client ID of type "Web application", with the authorised redirect URI `http://localhost:3000/fitbit/callback`
 4. Note your Client ID and Client Secret
+
+Each user signs in with the Google account that their Fitbit is linked to.
 
 #### 4. Backend Setup
 
@@ -309,9 +313,9 @@ See `backend/.env.example` for the full template.
 | `FIREBASE_PROJECT_ID` | Firebase project ID |
 | `FIREBASE_PRIVATE_KEY` | Firebase service account private key |
 | `FIREBASE_CLIENT_EMAIL` | Firebase service account email |
-| `FITBIT_CLIENT_ID` | Fitbit OAuth client ID |
-| `FITBIT_CLIENT_SECRET` | Fitbit OAuth client secret |
-| `FITBIT_REDIRECT_URI` | Fitbit OAuth callback URL (defaults to `http://localhost:3000/fitbit/callback`) |
+| `GOOGLE_HEALTH_CLIENT_ID` | Google OAuth client ID for the Google Health API |
+| `GOOGLE_HEALTH_CLIENT_SECRET` | Google OAuth client secret |
+| `GOOGLE_HEALTH_REDIRECT_URI` | OAuth callback URL (defaults to `http://localhost:3000/fitbit/callback`) |
 | `FITBIT_TOKEN_ENCRYPTION_KEYS` | Fernet keys for token encryption at rest, newest first, comma-separated (**required**) |
 | `FITBIT_SYNC_LOOKBACK_DAYS` | Days each nightly sync re-reads (defaults to 3) |
 | `FITBIT_MAX_AUTH_FAILURES` | Consecutive auth failures before a user is disconnected (defaults to 3) |
@@ -448,7 +452,7 @@ Two managed services are required:
 - **PostgreSQL** — any provider, wired in via `DATABASE_URL`
 - **Redis** — the Celery broker, via `CELERY_BROKER_URL`. Use a `rediss://` URL
 
-Set the rest as Fly secrets (`fly secrets set`): `DJANGO_SECRET_KEY`, `FIREBASE_PROJECT_ID`, `FIREBASE_CLIENT_EMAIL`, `FIREBASE_PRIVATE_KEY`, `FITBIT_CLIENT_ID`, `FITBIT_CLIENT_SECRET`, `FITBIT_REDIRECT_URI`, `FITBIT_TOKEN_ENCRYPTION_KEYS`, `CORS_ALLOWED_ORIGINS`, `OLLAMA_BASE_URL`, `OLLAMA_API_KEY`.
+Set the rest as Fly secrets (`fly secrets set`): `DJANGO_SECRET_KEY`, `FIREBASE_PROJECT_ID`, `FIREBASE_CLIENT_EMAIL`, `FIREBASE_PRIVATE_KEY`, `GOOGLE_HEALTH_CLIENT_ID`, `GOOGLE_HEALTH_CLIENT_SECRET`, `GOOGLE_HEALTH_REDIRECT_URI`, `FITBIT_TOKEN_ENCRYPTION_KEYS`, `CORS_ALLOWED_ORIGINS`, `OLLAMA_BASE_URL`, `OLLAMA_API_KEY`.
 
 > `FIREBASE_PRIVATE_KEY` must keep its literal `\n` sequences rather than real newlines; `users/firebase_auth.py` expands them on load.
 
@@ -474,7 +478,7 @@ The build output is `frontend/dist`, published with `wrangler pages deploy`.
 | `VITE_FIREBASE_*` (6) | variable | Firebase web config |
 | `VITE_API_BASE_URL` | variable | e.g. `https://<app>.fly.dev/api` |
 
-After the first deploy, three settings must be updated by hand to point at the new hostnames: `CORS_ALLOWED_ORIGINS` on Fly, the authorised domains list in the Firebase console, and the redirect URL in the Fitbit developer portal.
+After the first deploy, three settings must be updated by hand to point at the new hostnames: `CORS_ALLOWED_ORIGINS` on Fly, the authorised domains list in the Firebase console, and the authorised redirect URI of the Google OAuth client.
 
 ### Legacy hosts
 

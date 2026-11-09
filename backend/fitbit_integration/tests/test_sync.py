@@ -19,32 +19,47 @@ from sleep.models import SleepRecord, SleepStageData
 User = get_user_model()
 
 
-def sleep_payload(log_id='1001', date_of_sleep='2026-09-01', with_stages=True):
-    """One night, shaped the way Fitbit's /sleep/date range endpoint returns it."""
-    entry = {
-        'logId': log_id,
-        'dateOfSleep': date_of_sleep,
-        'startTime': f'{date_of_sleep}T23:10:00.000Z',
-        'endTime': f'{date_of_sleep}T07:20:00.000Z',
-        'duration': 29400000,
-        'minutesAsleep': 456,
-        'minutesAwake': 34,
-        'efficiency': 93,
-        'isMainSleep': True,
-        'type': 'stages',
-        'levels': {
-            'summary': {
-                'deep': {'minutes': 78},
-                'light': {'minutes': 264},
-                'rem': {'minutes': 114},
+def sleep_payload(point_id='dp-1001', with_stages=True):
+    """One night, shaped the way Google Health's sleep dataPoints list returns it.
+
+    The interval is in UTC with a -4h offset, so the local night runs from
+    23:10 on 1 September to 07:20 on 2 September.
+    """
+    def span(start, end, stage_type):
+        return {
+            'startTime': start, 'startUtcOffset': '-14400s',
+            'endTime': end, 'endUtcOffset': '-14400s', 'type': stage_type,
+        }
+
+    stages = [
+        span('2026-09-02T03:10:00Z', '2026-09-02T03:40:00Z', 'DEEP'),
+        span('2026-09-02T03:40:00Z', '2026-09-02T04:40:00Z', 'LIGHT'),
+    ] if with_stages else []
+
+    return [{
+        'name': f'users/111/dataTypes/sleep/dataPoints/{point_id}',
+        'dataSource': {'recordingMethod': 'DERIVED', 'platform': 'FITBIT'},
+        'sleep': {
+            'interval': {
+                'startTime': '2026-09-02T03:10:00Z', 'startUtcOffset': '-14400s',
+                'endTime': '2026-09-02T11:20:00Z', 'endUtcOffset': '-14400s',
             },
-            'data': [
-                {'level': 'deep', 'dateTime': f'{date_of_sleep}T23:10:00.000Z', 'seconds': 1800},
-                {'level': 'light', 'dateTime': f'{date_of_sleep}T23:40:00.000Z', 'seconds': 3600},
-            ] if with_stages else [],
+            'type': 'STAGES',
+            'stages': stages,
+            'metadata': {'stagesStatus': 'SUCCEEDED', 'processed': True, 'main': True},
+            'summary': {
+                'minutesInSleepPeriod': '490',
+                'minutesAsleep': '456',
+                'minutesAwake': '34',
+                'stagesSummary': [
+                    {'type': 'DEEP', 'minutes': '78', 'count': '4'},
+                    {'type': 'LIGHT', 'minutes': '264', 'count': '20'},
+                    {'type': 'REM', 'minutes': '114', 'count': '5'},
+                    {'type': 'AWAKE', 'minutes': '34', 'count': '12'},
+                ],
+            },
         },
-    }
-    return {'sleep': [entry]}
+    }]
 
 
 class SyncSuccessTests(TestCase):
@@ -63,7 +78,7 @@ class SyncSuccessTests(TestCase):
 
     def run_sync(self, payload):
         with patch(
-            'fitbit_integration.sync.FitbitService.get_sleep_log_range',
+            'fitbit_integration.sync.GoogleHealthService.list_sleep',
             return_value=payload,
         ):
             return sync_user_sleep(self.user, self.start, self.end)
@@ -72,7 +87,7 @@ class SyncSuccessTests(TestCase):
         self.run_sync(sleep_payload())
 
         record = SleepRecord.objects.get(user=self.user)
-        self.assertEqual(record.external_id, '1001')
+        self.assertEqual(record.external_id, 'dp-1001')
         self.assertEqual(record.source, 'fitbit')
         self.assertEqual(record.minutes_asleep, 456)
 
@@ -95,11 +110,12 @@ class SyncSuccessTests(TestCase):
 
     def test_resyncing_a_night_updates_it_rather_than_duplicating(self):
         # The nightly run deliberately re-reads the last few days, so the
-        # same logId arrives repeatedly. The (user, external_id) constraint
-        # means a second write must be an update, not an IntegrityError.
+        # same data point arrives repeatedly. The (user, external_id)
+        # constraint means a second write must be an update, not an
+        # IntegrityError.
         self.run_sync(sleep_payload())
         revised = sleep_payload()
-        revised['sleep'][0]['minutesAsleep'] = 470
+        revised[0]['sleep']['summary']['minutesAsleep'] = '470'
         self.run_sync(revised)
 
         self.assertEqual(SleepRecord.objects.filter(user=self.user).count(), 1)
@@ -112,15 +128,58 @@ class SyncSuccessTests(TestCase):
         self.run_sync(sleep_payload())
 
         revised = sleep_payload()
-        revised['sleep'][0]['levels']['data'] = [
-            {'level': 'wake', 'dateTime': '2026-09-01T23:10:00.000Z', 'seconds': 600},
-        ]
+        revised[0]['sleep']['stages'] = [{
+            'startTime': '2026-09-02T03:10:00Z', 'startUtcOffset': '-14400s',
+            'endTime': '2026-09-02T03:20:00Z', 'endUtcOffset': '-14400s',
+            'type': 'AWAKE',
+        }]
         self.run_sync(revised)
 
         record = SleepRecord.objects.get(user=self.user)
         stages = SleepStageData.objects.filter(sleep_record=record)
         self.assertEqual(stages.count(), 1)
         self.assertEqual(stages.first().stage, 'wake')
+
+    def test_maps_google_health_fields(self):
+        self.run_sync(sleep_payload())
+        record = SleepRecord.objects.get(user=self.user)
+
+        # Local wall-clock time, stored the way legacy Fitbit records were.
+        self.assertEqual(record.start_time.isoformat(), '2026-09-01T23:10:00+00:00')
+        self.assertEqual(record.end_time.isoformat(), '2026-09-02T07:20:00+00:00')
+        self.assertEqual(record.date_of_sleep, date(2026, 9, 2))
+        self.assertEqual(record.duration_minutes, 490)
+        self.assertEqual(record.minutes_awake, 34)
+        self.assertEqual(record.efficiency, 93)
+        self.assertTrue(record.is_main_sleep)
+        self.assertEqual(record.sleep_type, 'stages')
+        self.assertEqual(
+            (record.deep_sleep_minutes, record.light_sleep_minutes, record.rem_sleep_minutes),
+            (78, 264, 114),
+        )
+
+    def test_maps_stage_types_and_durations(self):
+        self.run_sync(sleep_payload())
+        stages = list(SleepStageData.objects.order_by('start_time'))
+
+        self.assertEqual([s.stage for s in stages], ['deep', 'light'])
+        self.assertEqual([s.duration_seconds for s in stages], [1800, 3600])
+
+    def test_adopts_a_night_imported_from_the_legacy_fitbit_api(self):
+        # Data point ids are not Fitbit logIds. Without adoption, the first
+        # Google Health sync would duplicate every night already imported.
+        SleepRecord.objects.create(
+            user=self.user, external_id='42424242', source='fitbit',
+            date_of_sleep=date(2026, 9, 2),
+            start_time='2026-09-01T23:10:00Z', end_time='2026-09-02T07:20:00Z',
+            duration_minutes=490, minutes_asleep=450,
+        )
+
+        self.run_sync(sleep_payload())
+
+        record = SleepRecord.objects.get(user=self.user)
+        self.assertEqual(record.external_id, 'dp-1001')
+        self.assertEqual(record.minutes_asleep, 456)
 
     def test_success_clears_earlier_auth_failures(self):
         self.token.consecutive_auth_failures = 2
@@ -148,7 +207,7 @@ class SyncFailureAccountingTests(TestCase):
 
     def run_failing_sync(self, exc):
         with patch(
-            'fitbit_integration.sync.FitbitService.get_sleep_log_range',
+            'fitbit_integration.sync.GoogleHealthService.list_sleep',
             side_effect=exc,
         ):
             with self.assertRaises(type(exc)):
@@ -200,7 +259,7 @@ class SyncFailureAccountingTests(TestCase):
         # A 'pending' row nothing finishes would read as a sync still in
         # flight forever.
         with patch(
-            'fitbit_integration.sync.FitbitService.get_sleep_log_range',
+            'fitbit_integration.sync.GoogleHealthService.list_sleep',
             side_effect=ValueError('malformed payload'),
         ):
             with self.assertRaises(ValueError):
